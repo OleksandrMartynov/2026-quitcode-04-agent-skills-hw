@@ -4,8 +4,8 @@ import { LeadsToolbar } from "@/components/leads-toolbar";
 import { StatsCards } from "@/components/stats-cards";
 import {
   getCurrentUser,
+  getLeadRows,
   getLeadStats,
-  getLeads,
   getSourceBreakdown,
   getWorkspace,
 } from "@/lib/data";
@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   const workspace = await getWorkspace({ slug: user.workspaceSlug });
   const [leads, stats, sources] = await Promise.all([
-    getLeads(workspace.id),
+    getLeadRows(workspace.id),
     getLeadStats(workspace.id),
     getSourceBreakdown(workspace.id),
   ]);

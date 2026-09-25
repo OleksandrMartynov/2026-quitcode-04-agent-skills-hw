@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
 import { SESSION_COOKIE } from "./session";
+import type { LeadRow } from "./types";
 
 export async function getCurrentUser() {
   const cookieStore = await cookies();
@@ -21,8 +22,15 @@ export const getWorkspace = cache(async ({ slug }: { slug: string }) => {
   return workspace;
 });
 
-export async function getLeads(workspaceId: string) {
-  return db.getLeads(workspaceId);
+export async function getLeadRows(workspaceId: string): Promise<LeadRow[]> {
+  const leads = await db.getLeads(workspaceId);
+  return leads.map(({ id, fullName, company, status, createdAt }) => ({
+    id,
+    fullName,
+    company,
+    status,
+    createdAt,
+  }));
 }
 
 export async function getLeadStats(workspaceId: string) {

@@ -51,6 +51,9 @@ export type Lead = {
   updatedAt: string;
 };
 
+/** What the dashboard table renders; the only lead fields that cross into the browser. */
+export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 export type NewLead = Omit<
   Lead,
   | "id"
