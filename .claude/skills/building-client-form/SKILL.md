@@ -14,7 +14,7 @@ description: >-
   сервер, входу через стороннього провайдера.
 metadata:
   owner: quitcode-agency
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Клієнтська форма: один патерн для всіх проєктів
@@ -34,10 +34,11 @@ metadata:
 1. **Server Action = публічний POST** (`server-auth-actions`). Файл із `"use server"` експортує лише
    async-функції й типи (`initialState` та інші константи — у клієнтському компоненті). Усередині дії,
    саме в такому порядку:
-   1. **Сесія й права.** Форма дашборду: `getCurrentUser()` (у LeadDesk — `lib/data.ts`, без сесії робить
-      redirect на `/login`) і перевірка, що запис належить воркспейсу користувача. Публічна форма сесії не має
-      за призначенням — це явно видно з коду (коментар), захист — валідація й відсутність даних у відповіді.
-      Перевірки сторінки, `proxy.ts` чи атрибути `required`/`maxLength` у браузері дію **не** захищають.
+   1. **Сесія й права.** Форма за входом: функція сесії проєкту (знайди наявну; без сесії — redirect на вхід
+      або відмова) і перевірка, що запис, який змінюють, належить воркспейсу чи власнику користувача. Публічна
+      форма (заявка з сайту) сесії не має за призначенням — це явно видно з коду (коментар), а захист —
+      валідація, ліміти й відсутність даних у відповіді. Перевірки сторінки, middleware/proxy чи атрибути
+      `required`/`maxLength` у браузері дію **не** захищають.
    2. **Валідація кожного поля на сервері**: обов'язковість, тип, формат, довжина. Ліміт перевищено —
       помилка поля, а не мовчазне обрізання.
    3. **Запис** — до відповіді (це і є результат дії).
@@ -52,52 +53,71 @@ metadata:
    - Над формою — підсумок `<div role="alert">` зі списком помилок, коли `status === "invalid"`.
    - Введене не зникає: `defaultValue={values.<поле>}`; для `<select>` ще й `key={values.<поле>}` — React 19
      скидає неконтрольовані поля після дії, а новий `defaultValue` у `select` без перемонтування не діє.
-   - Успіх — повідомлення з `role="status"` (або `aria-live="polite"`).
+     `values` повертаємо з **кожною** відмовою (і коли запис недоступний), не лише з помилками валідації.
+   - Успіх — у `role="status"`, який **завжди** є в розмітці й отримує текст лише після успіху: область, що
+     з'являється одразу з текстом, скрінрідери можуть не озвучити.
 4. **Журнали без персональних даних**: лише подія й ідентифікатор (`console.info("feedback.saved", { recordId })`).
    Ніколи `console.log(formData)`, email, телефон, текст полів, IP, cookie.
 5. **Повільне — після відповіді** (`server-after-nonblocking`): листи, аудит, виклики n8n/CRM —
    `after(() => …)` з `next/server`. Запис, без якого відповідь неправдива, — до відповіді, не в `after()`.
 
+Приклад — публічна форма зворотного зв'язку (скорочено; назви — приклад):
+
 ```tsx
-// actions.ts (скорочено; назви — приклад)
+// app/contact/actions.ts
 "use server";
-export async function saveFeedback(_prev: FeedbackState, formData: FormData): Promise<FeedbackState> {
-  const user = await getCurrentUser();                               // 1. сесія
-  const record = await findOwnRecord(user, formData.get("recordId")); //    права: запис свого воркспейсу
-  if (!record) return { status: "invalid", errors: { form: "Запис недоступний" }, values: {} };
-  const parsed = parseFeedbackForm(formData);   // 2. валідація: { ok: true, data } | { ok: false, errors, values }
+import { after } from "next/server";
+
+export async function sendFeedback(_prev: FeedbackState, formData: FormData): Promise<FeedbackState> {
+  // Публічна форма: сесії немає за призначенням; захист — валідація й мінімальна відповідь.
+  const parsed = parseFeedbackForm(formData); // { ok: true, data } | { ok: false, errors, values }
   if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
-  await db.saveFeedback(record.id, parsed.data);                     // 3. запис
-  after(() => logAudit("feedback.saved", record.id));                //    повільне — після відповіді
-  revalidatePath(`/dashboard/records/${record.id}`);
-  return { status: "ok" };                                           // 4. лише стан
+  const saved = await db.insertFeedback(parsed.data);             // запис — до відповіді
+  after(() => notifyTeam(saved.id));                              // лист/інтеграція — після відповіді
+  console.info("feedback.received", { id: saved.id });            // лише подія й id
+  return { status: "ok" };
 }
 ```
 
 ```tsx
-// feedback-form.tsx (скорочено)
+// app/contact/feedback-form.tsx
 "use client";
 const initialState: FeedbackState = { status: "idle" };
-export function FeedbackForm({ recordId }: { recordId: string }) {
-  const [state, formAction, pending] = useActionState(saveFeedback, initialState);
+const TOPICS = [["", "Оберіть тему"], ["project", "Новий проєкт"], ["support", "Підтримка"]] as const;
+
+export function FeedbackForm() {
+  const [state, formAction, pending] = useActionState(sendFeedback, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
   const values = state.status === "invalid" ? state.values : {};
+  const field = (name: "email" | "topic" | "message") => ({
+    id: name, name, "aria-invalid": Boolean(errors[name]),
+    "aria-describedby": errors[name] ? `${name}-error` : undefined,
+  });
   return (
     <form action={formAction} noValidate>
-      <input type="hidden" name="recordId" value={recordId} />
       {state.status === "invalid" && (
-        <div role="alert"><ul>{Object.values(errors).map((m) => <li key={m}>{m}</li>)}</ul></div>
+        <div role="alert"><ul>{Object.entries(errors).map(([k, m]) => <li key={k}>{m}</li>)}</ul></div>
       )}
+      <label htmlFor="email">Email</label>
+      <input type="email" autoComplete="email" defaultValue={values.email} {...field("email")} />
+      {errors.email && <p id="email-error">{errors.email}</p>}
+      <label htmlFor="topic">Тема</label>
+      <select key={values.topic ?? ""} defaultValue={values.topic ?? ""} {...field("topic")}>
+        {TOPICS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+      {errors.topic && <p id="topic-error">{errors.topic}</p>}
       <label htmlFor="message">Повідомлення</label>
-      <textarea id="message" name="message" defaultValue={values.message}
-        aria-invalid={Boolean(errors.message)} aria-describedby={errors.message ? "message-error" : undefined} />
+      <textarea defaultValue={values.message} {...field("message")} />
       {errors.message && <p id="message-error">{errors.message}</p>}
       <button type="submit" disabled={pending}>{pending ? "Надсилаємо…" : "Надіслати"}</button>
-      {state.status === "ok" && <p role="status">Надіслано</p>}
+      <p role="status">{state.status === "ok" ? "Дякуємо, повідомлення надіслано" : ""}</p>
     </form>
   );
 }
 ```
+
+Форма за входом відрізняється лише початком дії: спершу сесія й перевірка, що запис належить користувачу
+(інакше — `{ status: "invalid", errors: { form: "…недоступний" }, values }` з тим, що людина ввела), далі так само.
 
 ## Чекліст
 
