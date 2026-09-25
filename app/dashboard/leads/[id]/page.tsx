@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { LeadActions } from "@/components/lead-actions";
+import { LeadNoteForm } from "@/components/lead-note-form";
 import { StatusBadge } from "@/components/status-badge";
 import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 
@@ -60,12 +61,17 @@ export default async function LeadPage({ params }: PageProps<"/dashboard/leads/[
         <p className="whitespace-pre-line text-slate-700">{lead.message}</p>
       </section>
 
-      {lead.internalNotes && (
-        <section className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm">
+      <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm">
+        <div className="space-y-2">
           <h2 className="font-medium">Внутрішні нотатки</h2>
-          <p className="text-slate-700">{lead.internalNotes}</p>
-        </section>
-      )}
+          {lead.internalNotes ? (
+            <p className="whitespace-pre-line break-words text-slate-700">{lead.internalNotes}</p>
+          ) : (
+            <p className="text-slate-500">Нотаток ще немає.</p>
+          )}
+        </div>
+        <LeadNoteForm leadId={lead.id} />
+      </section>
 
       <LeadActions leadId={lead.id} status={lead.status} />
     </div>

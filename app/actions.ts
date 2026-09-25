@@ -2,10 +2,12 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { parseLeadNote, type LeadNoteField } from "@/lib/lead-note";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -87,6 +89,35 @@ export async function updateLeadStatus(id: string, status: LeadStatus): Promise<
 
   await db.updateLeadStatus(lead.id, status);
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export type AddLeadNoteState =
+  | { status: "idle" }
+  | {
+      status: "invalid";
+      errors: Partial<Record<LeadNoteField | "form", string>>;
+      values: Partial<Record<LeadNoteField, string>>;
+    }
+  | { status: "ok" };
+
+const LEAD_UNAVAILABLE = "Лід недоступний: його вже видалено або він з іншого воркспейсу.";
+
+export async function addLeadNote(
+  _prevState: AddLeadNoteState,
+  formData: FormData,
+): Promise<AddLeadNoteState> {
+  const lead = await findOwnLead(formData.get("leadId"));
+  if (!lead) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values: {} };
+
+  const parsed = parseLeadNote(formData);
+  if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
+
+  const saved = await db.appendLeadNote(lead.id, parsed.note);
+  if (!saved) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values: {} };
+
+  after(() => logAudit("lead.note_added", lead.id));
   revalidatePath(`/dashboard/leads/${lead.id}`);
   return { status: "ok" };
 }
