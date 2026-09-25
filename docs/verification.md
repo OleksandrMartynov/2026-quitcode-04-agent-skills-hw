@@ -7,7 +7,26 @@
 
 ## Скіли видно у свіжій сесії
 
-_Таблицю для всіх трьох скілів заповнено на коміті BASE (див. нижче, Task C)._
+- Як перевіряли: свіжа headless-сесія `claude -p "/context"` з кореня репозиторію (розділ Skills звіту
+  `/context`) + список `skills` з init-події тієї ж сесії.
+
+**Task A (коміт `084f9ff`, одразу після встановлення):**
+
+| Skill | Звідки (Project / Personal / вбудований) | Примітка |
+|---|---|---|
+| `vercel-react-best-practices` | Project | рядок `vercel-react-best-practices \| Project \| ~120` у розділі Skills `/context` |
+
+Рядки `building-client-form` і `integrating-n8n-webhooks` додаються, коли з'являться ці скіли (Task B, C);
+повну таблицю для всіх трьох ще раз знімаємо на коміті BASE перед Task D.
+
+- Особисті скіли, які теж видно: `review-task` (`~/.claude/skills/review-task`, скіл рев'ю від викладача з
+  `disable-model-invocation: true` — є в init-списку `skills`, але не в розділі Skills `/context`, тобто модель
+  сама його не викликає) і синхронізовані з claude.ai `anthropic-skills:{docs,docx,import-memory,morning,pdf,
+  pptx,skill-creator,xlsx}` (у `/context` — джерело «claude.ai sync»); решта — вбудовані скіли Claude Code.
+  Жоден не стосується продуктивності React, форм чи n8n (`grep -rilE "x-n8n|timingSafeEqual|idempotency-key|n8n|webhook"
+  ~/.claude/skills` знаходить лише загальне слово «webhooks» у `review-task/CRITERIA.md` — критерії рев'ю), тож на
+  перевірки вони не впливають. Скіл `find-skills`, який CLI `skills` поставив глобально під час повторного
+  встановлення, відсунуто з `~/.claude/skills` до будь-яких наступних свіжих сесій (`docs/skill-review.md`, розділ 6).
 
 ## Task A — виправлення за скілом Vercel
 
@@ -64,8 +83,8 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
 | Правило (id) | Коміт | Файли | Що змінилось | Було (`main`, `084f9ff`) | Стало | Як міряли |
 |---|---|---|---|---|---|---|
 | `async-parallel` | `92bd9b9` | `app/dashboard/page.tsx` | три незалежні запити (`getLeads` 400 мс, `getLeadStats` 1200 мс, `getSourceBreakdown` 400 мс) більше не чекаються по черзі — `Promise.all` | TTFB / total: 2,235 / 2,235 с; 2,231 / 2,231 с; 2,228 / 2,228 с | 1,424 / 1,424 с; 1,428 / 1,428 с; 1,424 / 1,425 с | `curl` × 3 після прогріву, продакшн |
-| `server-serialization` | `e22e94c` | `app/dashboard/page.tsx`, `components/leads-table.tsx`, `lib/data.ts`, `lib/types.ts` | Client Component `LeadsTable` отримує `LeadRow` (5 полів, які він рендерить), а не повний `Lead` з 29 полів; DTO будує `getLeadRows` на сервері | HTML 424 592 B, RSC 315 197 B; у HTML і RSC — по 344 email, 344 телефони `+380…`, по 172 `internalNotes`, `rawPayload`, `ipAddress` і 344 `userAgent` | HTML 111 377 B, RSC 31 257 B; email, телефонів і цих ключів — 0 | `wc -c` і `grep -o … \| wc -l` (детерміновано) |
-| `server-auth-actions` | `9144df3` | `app/actions.ts`, `components/lead-actions.tsx` | `updateLeadStatus` і `deleteLead` перевіряють сесію (`getCurrentUser`), що лід належить воркспейсу користувача, і статус зі списку `LEAD_STATUSES`; повертають `{ status }`, за яким `LeadActions` відкочує оптимістичне оновлення | відтворення (нижче): Marta з воркспейсу brightline змінює `lead_0001` studio-nova `qualified → lost`, підроблена cookie — `→ hacked` (невалідний статус) | Marta → `{"status":"not_found"}`, статус не змінився; підроблена cookie → `x-action-redirect: /login`, статус не змінився; власниця з невалідним статусом → `{"status":"invalid"}` | `curl -X POST` на `/dashboard/leads/lead_0001` з `Next-Action: <id updateLeadStatus>` з `.next/server/server-reference-manifest.json`, тіло `["lead_0001","<статус>"]` |
+| `server-serialization` | `e22e94c` (+ `8b8cebf` — уточнено коментар `LeadRow`) | `app/dashboard/page.tsx`, `components/leads-table.tsx`, `lib/data.ts`, `lib/types.ts` | Client Component `LeadsTable` отримує `LeadRow` (5 полів, які він рендерить), а не повний `Lead` з 29 полів; DTO будує `getLeadRows` на сервері | HTML 424 592 B, RSC 315 197 B; у HTML і RSC — по 344 email, 344 телефони `+380…`, по 172 `internalNotes`, `rawPayload`, `ipAddress` і 344 `userAgent` | HTML 111 377 B, RSC 31 257 B; email, телефонів і цих ключів — 0 | `wc -c` і `grep -o … \| wc -l` (детерміновано) |
+| `server-auth-actions` | `9144df3` (+ `5aa43a6` — відмову видно в UI) | `app/actions.ts`, `components/lead-actions.tsx` | `updateLeadStatus` і `deleteLead` перевіряють сесію (`getCurrentUser`), що лід належить воркспейсу користувача, і статус зі списку `LEAD_STATUSES`; повертають `{ status }`, за яким `LeadActions` відкочує оптимістичне оновлення | відтворення (нижче): Marta з воркспейсу brightline змінює `lead_0001` studio-nova `qualified → lost`, підроблена cookie — `→ hacked` (невалідний статус) | Marta → `{"status":"not_found"}`, статус не змінився; підроблена cookie → `x-action-redirect: /login`, статус не змінився; власниця з невалідним статусом → `{"status":"invalid"}` | `curl -X POST` на `/dashboard/leads/lead_0001` з `Next-Action: <id updateLeadStatus>` з `.next/server/server-reference-manifest.json`, тіло `["lead_0001","<статус>"]` |
 
 - **Чому обрали для заміру `async-parallel`:** це й є скарга клієнта (дашборд > 2 с), а затримки запитів
   детерміновані (`LATENCY_MS` у `lib/db.ts`), тож ефект видно без шуму: 100 + 100 + 400 + 1200 + 400 ≈ 2,2 с
@@ -73,8 +92,8 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
 - **Друге виправлення (`server-serialization`):** таблиця рендерить лише ім'я, компанію, статус і дату, а в
   браузер ішли email, телефони, IP, user-agent, сирі дані форми й внутрішні нотатки кожного ліда. Не зламали:
   `npm run lint`/`build` без помилок (TypeScript звірив, що `LeadsTable` не використовує інших полів),
-  таблиця на `/dashboard` рендериться (`curl … | grep -o "Kateryna Tkachenko"` знаходить рядок), TTFB не
-  змінився (1,416–1,419 с). Пошук і експорт беруть дані з `/api/leads`, яке й далі віддає email і телефон —
+  таблиця на `/dashboard` рендериться (на `5aa43a6`, свіжі дані: `HTTP 200`, 111 377 B, 173 елементи `<tr>` —
+  заголовок + 172 ліди, `grep -o 'Kateryna Tkachenko'` → 2 збіги), TTFB не змінився (1,416–1,419 с). Пошук і експорт беруть дані з `/api/leads`, яке й далі віддає email і телефон —
   це їхнє призначення, у цьому виправленні не змінювали.
 - **Третє виправлення (`server-auth-actions`):** `proxy.ts` лише перевіряє, що cookie сесії **є**, тож
   Server Actions на сторінці ліда виконувались для будь-кого. Відтворення до/після:
@@ -96,14 +115,17 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
            Olena [hacked] -> {"status":"invalid"}; status now "status":"won"
   ```
 
-  Не зламали: зміна статусу в UI власницею працює (у вбудованому браузері `lead_0002` → «Контакт»,
-  сервер повернув `"status":"contacted"`), lint і build без помилок. Сесію перевіряємо **до** валідації
+  Не зламали: зміна статусу в UI власницею працює (вбудований браузер, `5aa43a6`: `lead_0002` `"status":"new"` →
+  select «Контакт» → сервер повертає `"status":"contacted"`), lint і build без помилок. Доповнення `5aa43a6`:
+  відмову сервера видно користувачу — для вже видаленого `lead_0004` кнопка «Видалити лід» лишає сторінку й
+  показує `role="alert"` «Лід недоступний: його вже видалено або він з іншого воркспейсу.», а зміна статусу
+  вже видаленого `lead_0003` після `router.refresh()` показує сторінку 404. Сесію перевіряємо **до** валідації
   статусу, щоб невалідний виклик без сесії нічого не дізнавався про валідацію.
 - **Поради скіла, які звірили з документацією Next.js 16 і не застосували** (деталі й цитати —
   `docs/skill-review.md`, розділ 5):
   - `bundle-barrel-imports` для `components/lead-search.tsx:5` — Next 16.3.5 сам переписує імпорти lodash
     на `lodash/{{member}}` (`node_modules/next/dist/server/config.js:1111-1119`). Перевірили збіркою: з
-    `import debounce from "lodash/debounce"` усі 12 клієнтських чанків байт-у-байт ті самі (1 887 250 B), тож
+    `import debounce from "lodash/debounce"` усі 12 клієнтських чанків байт-у-байт ті самі (повтор на `5aa43a6`: 1 887 647 B до й після, однакові sha256), тож
     правку відкотили й не комітили;
   - `bundle-dynamic-imports` — приклад скіла з `ssr: false` без `"use client"` у Server Component зламав би
     збірку (`lazy-loading.md:94-95`); у цьому PR не застосовували;
@@ -114,8 +136,8 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
     `db:getWorkspace` — по 3 на один запит сторінки, до й після), `bundle-conditional`, `bundle-preload`,
     `rerender-*`, `js-*` — слушні, але поза межами «щонайменше двох» виправлень; не застосовували.
 - **Якщо виміряне виправлення не змінило чисел:** змінило (2,23 → 1,42 с).
-- `npm run lint`, `npm run build` після кожного з трьох виправлень — код виходу 0, без помилок і
-  попереджень.
+- `npm run lint`, `npm run build` після кожного виправлення (`92bd9b9`, `e22e94c`, `9144df3`, `5aa43a6`) — код
+  виходу 0, без помилок і попереджень.
 
 ## Task B — `building-client-form`
 

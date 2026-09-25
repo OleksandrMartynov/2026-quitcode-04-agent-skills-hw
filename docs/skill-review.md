@@ -66,7 +66,8 @@
 | Snyk | Pass, ризик LOW, «No issues detected» | 14.09.2026, 22:48 |
 
 - Де взяли: сторінки <https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices> і її
-  `/security/{agent-trust-hub,socket,snyk}` (743,4K встановлень, 31,5K зірок, «First Seen Jan 19, 2026»);
+  `/security/{agent-trust-hub,socket,snyk}`, переглянуто 25.09.2026 (на сторінці: 743,4K встановлень, 31,5K
+  зірок, «First Seen Jan 19, 2026»; копії сторінок не зберігали — ті самі три вердикти показав CLI, нижче);
   блок «Security Risk Assessments» у CLI — див. нижче.
 - Чому CLI показав або не показав блок — два запуски у звичайному терміналі (не через агента: за walkthrough,
   Task A, крок 1.3, в агентській сесії CLI сам вмикає `--yes`), обидва з порожньої `~/ws4-scratch/audit-view`:
@@ -80,8 +81,8 @@
      https://skills.sh/vercel-labs/agent-skills` → `Proceed with installation?` → **No** → `Installation cancelled`;
      `ls -A ~/ws4-scratch/audit-view` → порожньо, `git status` репозиторію без змін. Блок не називає ні тег, ні
      коміт — він зіставлений з назвою скіла, а не з версією.
-  Те, що з `DISABLE_TELEMETRY=1` блок не з'являється і під час справжнього встановлення, перевіряємо на
-  самому встановленні (розділ 6).
+  Те, що з `DISABLE_TELEMETRY=1` блок не з'являється і під час справжнього встановлення, підтвердив запуск
+  встановлення в моєму терміналі (розділ 6).
 - До чого прив'язаний аудит: **не до нашого тега.** Жодна сторінка не називає тег, коміт чи версію; Socket
   показує лише ідентифікатор знімка skills.sh
   `pkg:socket/skills-sh/vercel-labs%2Fagent-skills%2Fvercel-react-best-practices%2F@ca7b0c0c…` — це хеш їхнього
@@ -114,19 +115,31 @@ _Дописано після кроку 5 walkthrough (рев'ю застосу�
 | `async-parallel` | незалежні async-операції запускати разом через `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md:456-502` — розділ «Parallel data fetching», запити стартують разом і чекаються через `Promise.all`; `:460` — layout і page і так рендеряться паралельно | **Правда для 16.3.5.** Застосовано (`92bd9b9`), виміряно в `docs/verification.md` |
 | `server-serialization` | на межі RSC передавати в Client Component лише потрібні поля | `05-server-and-client-components.md:298` — props для Client Components серіалізуються; `02-guides/data-security.md:156-158` і `:170` — інтерфейс props, що «accepts way more data than the Client Component needs», названо поганим, дані треба санітизувати перед передачею; `:64` — повертати мінімальні DTO | **Правда.** Застосовано (`e22e94c`) |
 | `server-auth-actions` | перевіряти автентифікацію й авторизацію всередині кожної Server Action, «не покладатись лише на middleware» (`rules/server-auth-actions.md:12`) | `02-guides/data-security.md:339` — «A page-level authentication check does not extend to the Server Actions… Always re-verify inside the action»; `03-api-reference/03-file-conventions/proxy.md:251` — перевіряти в кожній Server Function, не покладатись на Proxy; `middleware.md:11` — `middleware.js` у 16 перейменовано на `proxy.js` | **Правда**, але «middleware» у скілі треба читати як наш `proxy.ts`, який лише перевіряє наявність cookie. Застосовано (`9144df3`) |
-| `bundle-barrel-imports` | `import { debounce } from "lodash"` тягне весь пакет — імпортувати напряму або додати в `optimizePackageImports` (так і порадила сесія рев'ю для `components/lead-search.tsx:5`) | `optimizePackageImports.md:21-25` — у списку за замовчуванням `lodash-es`, а не `lodash`; **але** `node_modules/next/dist/server/config.js:1111-1119` жорстко додає `modularizeImports: { lodash: { transform: 'lodash/{{member}}' } }` («intentionally added after the user-provided modularizeImports config») | **Для нашої версії не діє.** Перевірили збіркою: з `import debounce from "lodash/debounce"` усі 12 клієнтських чанків байт-у-байт ті самі (1 887 250 B, однакові sha256) — порада нічого не змінює, не застосовуємо |
+| `bundle-barrel-imports` | `import { debounce } from "lodash"` тягне весь пакет — імпортувати напряму або додати в `optimizePackageImports` (так і порадила сесія рев'ю для `components/lead-search.tsx:5`) | `optimizePackageImports.md:21-25` — у списку за замовчуванням `lodash-es`, а не `lodash`; **але** `node_modules/next/dist/server/config.js:1111-1119` жорстко додає `modularizeImports: { lodash: { transform: 'lodash/{{member}}' } }` («intentionally added after the user-provided modularizeImports config») | **Для нашої версії не діє.** Перевірили збіркою: з `import debounce from "lodash/debounce"` усі 12 клієнтських чанків байт-у-байт ті самі (повтор на коміті `5aa43a6`: 1 887 647 B до й після, однакові sha256; діф тимчасової правки й хеші чанків збережено) — порада нічого не змінює, не застосовуємо |
 | `bundle-dynamic-imports` (і `bundle-defer-third-party`) | приклад `dynamic(() => import(…), { ssr: false })` без директиви `"use client"` (`rules/bundle-dynamic-imports.md:27-30`) | `02-guides/lazy-loading.md:94-95` — «`ssr: false` is not allowed with `next/dynamic` in Server Components» | **Шкодить, якщо скопіювати дослівно в Server Component** — збірка падає. У цьому PR не застосовували; можливо лише в Client Component (`components/leads-toolbar.tsx`) |
 
 ## 6. Закріплення версії й коміт
 
-- Команда встановлення (запускаєте ви у своєму терміналі, не агент):
+- Команда встановлення (за walkthrough — у звичайному терміналі, не через агента):
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`
   (scope — Project). `#<тег>` — закріплена версія; `--copy` — справжні файли замість symlink/junction;
   `-a claude-code` без `cursor` — без другої копії в `.agents/skills/`.
 - Де лягли файли; справжні файли чи посилання — _дописано після встановлення, коміт `084f9ff`_:
-  - команду запустив агент (Claude Code) з вашого дозволу вже **після** цього рев'ю й перегляду аудитів
-    (розділ 3), з тими самими аргументами + `--yes`; CLI сам визначив агента: `Agent detected — installing
-    non-interactively`, блоку аудитів з `DISABLE_TELEMETRY=1` не було (`grep -c "Security Risk"` у виводі → 0);
+  - **перший запуск** (коміт `084f9ff`) зробив агент Claude Code на моє прохання — уже **після** цього рев'ю й
+    перегляду аудитів у моєму терміналі (розділ 3) — з тими самими аргументами + `--yes`; CLI сам визначив
+    агента: `Agent detected — installing non-interactively`. Це відхилення від walkthrough («запускайте самі»),
+    тому команду **повторено в моєму терміналі** (наступний пункт);
+  - **повторний запуск у моєму терміналі** (`DISABLE_TELEMETRY=1 script -q … npx skills@1.7.0 add …#<тег> --skill
+    vercel-react-best-practices -a claude-code --copy`): інтерактивно, scope `Project` → `Installation Summary`
+    з `overwrites: Claude Code` → `Proceed with installation?` → `Yes` → `✓ vercel-react-best-practices (copied)`;
+    блоку «Security Risk Assessments» **немає** (`grep -c "Security Risk"` у записі сесії → 0, рядка
+    `Agent detected` теж 0) — це й підтверджує, що `DISABLE_TELEMETRY=1` вимикає аудити; після запуску
+    `git status` порожній — файли й `skills-lock.json` ідентичні коміту `084f9ff`;
+  - побічний ефект, який варто знати команді: після встановлення CLI питає `Install the find-skills skill?` — на
+    «так» він ставить **глобально** (`~/.claude/skills/find-skills`, `~/.agents/.skill-lock.json`) ще один скіл з
+    `vercel-labs/skills` **без закріпленої версії й без рев'ю**, який навчає агента шукати й ставити скіли
+    (`npx skills find/add`). У репозиторій він не потрапив; обидва шляхи відсунуто з `~/.claude/skills` (у
+    `~/ws4-scratch/parked/`), щоб свіжі сесії його не бачили. Для команди: на це питання відповідати **No**;
   - `Installation Summary` показав `…/04/.agents/skills/vercel-react-best-practices  copy → Claude Code`, а
     результат — `✓ vercel-react-best-practices (copied) → …/04/.claude/skills/vercel-react-best-practices`;
     `ls .agents` → немає теки: друга копія не лишилась;
