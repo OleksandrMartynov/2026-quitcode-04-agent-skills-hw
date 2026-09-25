@@ -2,30 +2,42 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { deleteLead, updateLeadStatus } from "@/app/actions";
+import { deleteLead, updateLeadStatus, type LeadMutationState } from "@/app/actions";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 import { STATUS_LABELS } from "./status-badge";
+
+const REFUSED: Record<Exclude<LeadMutationState["status"], "ok">, string> = {
+  not_found: "Лід недоступний: його вже видалено або він з іншого воркспейсу.",
+  invalid: "Такого статусу немає.",
+};
 
 export function LeadActions({ leadId, status }: { leadId: string; status: LeadStatus }) {
   const router = useRouter();
   const [current, setCurrent] = useState<LeadStatus>(status);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function changeStatus(next: LeadStatus) {
     const previous = current;
     setCurrent(next);
+    setError(null);
     startTransition(async () => {
       const result = await updateLeadStatus(leadId, next);
-      if (result.status !== "ok") setCurrent(previous);
+      if (result.status !== "ok") {
+        setCurrent(previous);
+        setError(REFUSED[result.status]);
+      }
       router.refresh();
     });
   }
 
   function remove() {
     if (!window.confirm("Видалити лід назавжди?")) return;
+    setError(null);
     startTransition(async () => {
       const result = await deleteLead(leadId);
       if (result.status === "ok") router.push("/dashboard");
+      else setError(REFUSED[result.status]);
     });
   }
 
@@ -54,6 +66,11 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
       >
         Видалити лід
       </button>
+      {error && (
+        <p role="alert" className="w-full text-sm text-red-700">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
