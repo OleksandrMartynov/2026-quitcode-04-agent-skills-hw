@@ -12,9 +12,11 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
   const [pending, startTransition] = useTransition();
 
   function changeStatus(next: LeadStatus) {
+    const previous = current;
     setCurrent(next);
     startTransition(async () => {
-      await updateLeadStatus(leadId, next);
+      const result = await updateLeadStatus(leadId, next);
+      if (result.status !== "ok") setCurrent(previous);
       router.refresh();
     });
   }
@@ -22,8 +24,8 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
   function remove() {
     if (!window.confirm("Видалити лід назавжди?")) return;
     startTransition(async () => {
-      await deleteLead(leadId);
-      router.push("/dashboard");
+      const result = await deleteLead(leadId);
+      if (result.status === "ok") router.push("/dashboard");
     });
   }
 
