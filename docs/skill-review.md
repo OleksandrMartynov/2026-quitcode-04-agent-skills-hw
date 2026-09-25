@@ -66,8 +66,9 @@
 | Snyk | Pass, ризик LOW, «No issues detected» | 14.09.2026, 22:48 |
 
 - Де взяли: сторінки <https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices> і її
-  `/security/{agent-trust-hub,socket,snyk}`, переглянуто 25.09.2026 (на сторінці: 743,4K встановлень, 31,5K
-  зірок, «First Seen Jan 19, 2026»; копії сторінок не зберігали — ті самі три вердикти показав CLI, нижче);
+  `/security/{agent-trust-hub,socket,snyk}`, переглянуто 25.09.2026 до встановлення (на сторінці: 743,4K
+  встановлень, 31,5K зірок, «First Seen Jan 19, 2026»); копій сторінок не зберігали — ті самі три вердикти
+  показав CLI, нижче;
   блок «Security Risk Assessments» у CLI — див. нижче.
 - Чому CLI показав або не показав блок — два запуски у звичайному терміналі (не через агента: за walkthrough,
   Task A, крок 1.3, в агентській сесії CLI сам вмикає `--yes`), обидва з порожньої `~/ws4-scratch/audit-view`:
@@ -81,8 +82,8 @@
      https://skills.sh/vercel-labs/agent-skills` → `Proceed with installation?` → **No** → `Installation cancelled`;
      `ls -A ~/ws4-scratch/audit-view` → порожньо, `git status` репозиторію без змін. Блок не називає ні тег, ні
      коміт — він зіставлений з назвою скіла, а не з версією.
-  Те, що з `DISABLE_TELEMETRY=1` блок не з'являється і під час справжнього встановлення, підтвердив запуск
-  встановлення в моєму терміналі (розділ 6).
+  _Дописано після встановлення:_ те, що з `DISABLE_TELEMETRY=1` блок не з'являється і під час справжнього
+  встановлення, показав повторний запуск встановлення в моєму терміналі (розділ 6).
 - До чого прив'язаний аудит: **не до нашого тега.** Жодна сторінка не називає тег, коміт чи версію; Socket
   показує лише ідентифікатор знімка skills.sh
   `pkg:socket/skills-sh/vercel-labs%2Fagent-skills%2Fvercel-react-best-practices%2F@ca7b0c0c…` — це хеш їхнього
@@ -124,22 +125,26 @@ _Дописано після кроку 5 walkthrough (рев'ю застосу�
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`
   (scope — Project). `#<тег>` — закріплена версія; `--copy` — справжні файли замість symlink/junction;
   `-a claude-code` без `cursor` — без другої копії в `.agents/skills/`.
-- Де лягли файли; справжні файли чи посилання — _дописано після встановлення, коміт `084f9ff`_:
+- Де лягли файли; справжні файли чи посилання — _дописано після встановлення (коміт `084f9ff`) і після повторного запуску в моєму терміналі_:
   - **перший запуск** (коміт `084f9ff`) зробив агент Claude Code на моє прохання — уже **після** цього рев'ю й
-    перегляду аудитів у моєму терміналі (розділ 3) — з тими самими аргументами + `--yes`; CLI сам визначив
-    агента: `Agent detected — installing non-interactively`. Це відхилення від walkthrough («запускайте самі»),
+    перегляду аудитів у моєму терміналі (розділ 3) — команда з транскрипту сесії:
+    `DISABLE_TELEMETRY=1 npx --yes skills@1.7.0 add vercel-labs/agent-skills#<тег> --skill vercel-react-best-practices -a claude-code --copy --yes`;
+    CLI сам визначив агента: `Agent detected — installing non-interactively`. Це відхилення від walkthrough («запускайте самі»),
     тому команду **повторено в моєму терміналі** (наступний пункт);
-  - **повторний запуск у моєму терміналі** (`DISABLE_TELEMETRY=1 script -q … npx skills@1.7.0 add …#<тег> --skill
-    vercel-react-best-practices -a claude-code --copy`): інтерактивно, scope `Project` → `Installation Summary`
+  - **повторний запуск у моєму терміналі** — командний рядок видно у вкладці терміналу:
+    `DISABLE_TELEMETRY=1 script -q ~/ws4-runs/taskA-cli-install-human.txt npx skills@1.7.0 add vercel-labs/agent-skills#<тег> --skill vercel-react-best-practices -a claude-code --copy`
+    (перша спроба в цій вкладці закінчилась `No` → `Installation cancelled`, друга — нижче): інтерактивно, scope `Project` → `Installation Summary`
     з `overwrites: Claude Code` → `Proceed with installation?` → `Yes` → `✓ vercel-react-best-practices (copied)`;
     блоку «Security Risk Assessments» **немає** (`grep -c "Security Risk"` у записі сесії → 0, рядка
-    `Agent detected` теж 0) — це й підтверджує, що `DISABLE_TELEMETRY=1` вимикає аудити; після запуску
-    `git status` порожній — файли й `skills-lock.json` ідентичні коміту `084f9ff`;
-  - побічний ефект, який варто знати команді: після встановлення CLI питає `Install the find-skills skill?` — на
-    «так» він ставить **глобально** (`~/.claude/skills/find-skills`, `~/.agents/.skill-lock.json`) ще один скіл з
+    `Agent detected` теж 0): у звичайному терміналі з `DISABLE_TELEMETRY=1` аудитів немає, як і пише
+    walkthrough; `git status --short` одразу після запуску нічого не вивів, а `git diff --stat 084f9ff 07a1a76 --
+    .claude/skills/vercel-react-best-practices skills-lock.json` порожній — файли й lock ідентичні;
+  - побічний ефект, який варто знати команді: після встановлення CLI питає `Install the find-skills skill?`
+    (одноразово, за замовчуванням виділено `Yes`); у цьому запуску відповідь `Yes` дано помилково, і CLI поставив **глобально** (`~/.claude/skills/find-skills`, `~/.agents/.skill-lock.json`) ще один скіл з
     `vercel-labs/skills` **без закріпленої версії й без рев'ю**, який навчає агента шукати й ставити скіли
-    (`npx skills find/add`). У репозиторій він не потрапив; обидва шляхи відсунуто з `~/.claude/skills` (у
-    `~/ws4-scratch/parked/`), щоб свіжі сесії його не бачили. Для команди: на це питання відповідати **No**;
+    (`npx skills find/add`). У репозиторій він не потрапив; `~/.claude/skills/find-skills` і
+    `~/.agents/.skill-lock.json` перенесено в `~/ws4-scratch/parked/` (нічого не видалено), щоб свіжі сесії
+    його не бачили. Для команди: на це питання відповідати **No**;
   - `Installation Summary` показав `…/04/.agents/skills/vercel-react-best-practices  copy → Claude Code`, а
     результат — `✓ vercel-react-best-practices (copied) → …/04/.claude/skills/vercel-react-best-practices`;
     `ls .agents` → немає теки: друга копія не лишилась;
