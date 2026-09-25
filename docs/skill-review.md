@@ -105,7 +105,17 @@
 
 ## 5. Чи правдивий зміст для нашого стеку
 
-_Дописується після звірки порад із документацією `node_modules/next/dist/docs/` (крок 5 walkthrough)._
+_Дописано після кроку 5 walkthrough (рев'ю застосунку скілом і виправлення, коміти `92bd9b9`, `e22e94c`,
+`9144df3`)._ Звіряли з документацією, що постачається з нашою версією: `node_modules/next/dist/docs/`
+(Next.js 16.3.5), і з кодом конфігурації `node_modules/next/dist/server/config.js`.
+
+| Порада скіла (id) | Що каже скіл | Що каже документація нашої версії | Висновок |
+|---|---|---|---|
+| `async-parallel` | незалежні async-операції запускати разом через `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md:456-502` — розділ «Parallel data fetching», запити стартують разом і чекаються через `Promise.all`; `:460` — layout і page і так рендеряться паралельно | **Правда для 16.3.5.** Застосовано (`92bd9b9`), виміряно в `docs/verification.md` |
+| `server-serialization` | на межі RSC передавати в Client Component лише потрібні поля | `05-server-and-client-components.md:298` — props для Client Components серіалізуються; `02-guides/data-security.md:156-158` і `:170` — інтерфейс props, що «accepts way more data than the Client Component needs», названо поганим, дані треба санітизувати перед передачею; `:64` — повертати мінімальні DTO | **Правда.** Застосовано (`e22e94c`) |
+| `server-auth-actions` | перевіряти автентифікацію й авторизацію всередині кожної Server Action, «не покладатись лише на middleware» (`rules/server-auth-actions.md:12`) | `02-guides/data-security.md:339` — «A page-level authentication check does not extend to the Server Actions… Always re-verify inside the action»; `03-api-reference/03-file-conventions/proxy.md:251` — перевіряти в кожній Server Function, не покладатись на Proxy; `middleware.md:11` — `middleware.js` у 16 перейменовано на `proxy.js` | **Правда**, але «middleware» у скілі треба читати як наш `proxy.ts`, який лише перевіряє наявність cookie. Застосовано (`9144df3`) |
+| `bundle-barrel-imports` | `import { debounce } from "lodash"` тягне весь пакет — імпортувати напряму або додати в `optimizePackageImports` (так і порадила сесія рев'ю для `components/lead-search.tsx:5`) | `optimizePackageImports.md:21-25` — у списку за замовчуванням `lodash-es`, а не `lodash`; **але** `node_modules/next/dist/server/config.js:1111-1119` жорстко додає `modularizeImports: { lodash: { transform: 'lodash/{{member}}' } }` («intentionally added after the user-provided modularizeImports config») | **Для нашої версії не діє.** Перевірили збіркою: з `import debounce from "lodash/debounce"` усі 12 клієнтських чанків байт-у-байт ті самі (1 887 250 B, однакові sha256) — порада нічого не змінює, не застосовуємо |
+| `bundle-dynamic-imports` (і `bundle-defer-third-party`) | приклад `dynamic(() => import(…), { ssr: false })` без директиви `"use client"` (`rules/bundle-dynamic-imports.md:27-30`) | `02-guides/lazy-loading.md:94-95` — «`ssr: false` is not allowed with `next/dynamic` in Server Components» | **Шкодить, якщо скопіювати дослівно в Server Component** — збірка падає. У цьому PR не застосовували; можливо лише в Client Component (`components/leads-toolbar.tsx`) |
 
 ## 6. Закріплення версії й коміт
 
@@ -113,7 +123,19 @@ _Дописується після звірки порад із документ
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`
   (scope — Project). `#<тег>` — закріплена версія; `--copy` — справжні файли замість symlink/junction;
   `-a claude-code` без `cursor` — без другої копії в `.agents/skills/`.
-- Де лягли файли; справжні файли чи посилання: _дописується після встановлення._
+- Де лягли файли; справжні файли чи посилання — _дописано після встановлення, коміт `084f9ff`_:
+  - команду запустив агент (Claude Code) з вашого дозволу вже **після** цього рев'ю й перегляду аудитів
+    (розділ 3), з тими самими аргументами + `--yes`; CLI сам визначив агента: `Agent detected — installing
+    non-interactively`, блоку аудитів з `DISABLE_TELEMETRY=1` не було (`grep -c "Security Risk"` у виводі → 0);
+  - `Installation Summary` показав `…/04/.agents/skills/vercel-react-best-practices  copy → Claude Code`, а
+    результат — `✓ vercel-react-best-practices (copied) → …/04/.claude/skills/vercel-react-best-practices`;
+    `ls .agents` → немає теки: друга копія не лишилась;
+  - `find .claude/skills/vercel-react-best-practices -type f | wc -l` → **75**; `find … -type l | wc -l` → 0;
+    `test -L .claude/skills/vercel-react-best-practices` → не symlink; `diff -rq` з клоном тега → лише
+    `Only in …/review-agent-skills/skills/react-best-practices: metadata.json`;
+  - `skills-lock.json`: `"source": "vercel-labs/agent-skills"`, `"ref": "agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278"`,
+    `"sourceType": "github"`, `"skillPath": "skills/react-best-practices/SKILL.md"`,
+    `"computedHash": "3219a1944e404ffc14d1d9d6aef6dd2e3855b81387ee0a044ccbfe14d34c2357"`.
 - Що потрапило в git: тека `.claude/skills/vercel-react-best-practices/` і `skills-lock.json`.
 - Як оновлювати: та сама команда з новим тегом → `git diff` теки скіла й `skills-lock.json` → рев'ю змін за
   цим чеклістом → окремий коміт. Файли Vercel вручну не редагуємо.
