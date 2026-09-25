@@ -141,7 +141,42 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
 
 ## Task B — `building-client-form`
 
-_Заповнюється на етапі Task B._
+- Запит у свіжій сесії (скіл не названо), дослівно з walkthrough:
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове поле до
+  > 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- Як запускали: окрема headless-сесія `eb640ccd-bc91-4023-ae02-50d473c03632` (Claude Code 2.1.280,
+  `claude-opus-5-5`, effort `high`) з кореня репозиторію на коміті `1108c40` (скіл щойно закомічено);
+  редагування дозволені (`acceptEdits`), з Bash — лише `npm run lint` і `npm run build`. У списку `skills`
+  init-події сесії є `building-client-form` і `vercel-react-best-practices`.
+- **Чи спрацював скіл і як це видно:** так. Перший виклик інструмента в журналі сесії —
+  `{"name":"Skill","input":{"skill":"building-client-form"}}`, до будь-якого читання файлів (перший `Read` —
+  виклик № 3). Сесія не відкривала ні `docs/`, ні `README.md` (walkthrough сам називає скіл, тож це джерело
+  підказки перевірено окремо) — лише код застосунку й `node_modules/next/dist/docs/`.
+- Друга спроба зі зміненим `description` не знадобилась — скіл спрацював з першої.
+- Що зроблено (файли): `components/lead-note-form.tsx` (нова форма), `lib/lead-note.ts` (валідація, ліміт 500,
+  CRLF рахується як один символ), `app/actions.ts` (`addLeadNote`: права через `findOwnLead` → валідація →
+  запис → аудит в `after()` → `{ status, errors?, values? }`), `lib/db.ts` (`appendLeadNote`),
+  `app/dashboard/leads/[id]/page.tsx` (блок нотаток видно завжди, переноси рядків). Сесія нічого не комітила й
+  живий сервер не запускала (запуск `next start` у фоні відхилено: `permission_denials` — 1), тож пункти
+  Verify пройдено окремо, нижче.
+- Код збережено окремим комітом `e54e2ae` на гілці `ws04/task-b-notes` і в робочу гілку повертається лише після
+  перенесення результату прогону B (Task D): так код, написаний іншим скілом, не потрапляє в BASE і не підказує
+  нічого жодній з копій A/B.
+- **Пункти Verify зі скіла — результат кожного** (продакшн-збірка цього коду, Olena, `/dashboard/leads/lead_0002`):
+  - `npm run lint` і `npm run build` — код виходу 0, без помилок і попереджень;
+  - порожня відправка: `role="alert"` «Напишіть текст нотатки», у поля `aria-invalid="true"` і
+    `aria-describedby="note-hint note-error"`, текст помилки — в `#note-error`, `<label for="note">` на місці;
+  - відправка з помилкою: 501 символ (обмеження `maxLength` обійдено з JS) → «Нотатка задовга: 501 із 500
+    символів», у полі лишились усі 501 символ; валідна нотатка → `role="status"` «Нотатку додано», поле очищено,
+    нотатка на сторінці;
+  - без JavaScript (POST `multipart/form-data` з прихованими полями дії, як це робить браузер без JS): порожня →
+    HTTP 200, сервер відмалював `role="alert"` і `aria-invalid="true"`; 501 символ → помилка, у `textarea`
+    501 символ; валідна → «Нотатку додано», нотатка збереглась;
+  - дія з чужого воркспейсу (Marta → `lead_0001` studio-nova) → HTTP 404, з підробленою cookie → 303 на
+    `/login`; нотаток із маркером у `lead_0001` до й після — 0;
+  - журнал сервера (`npm start`, 145 рядків): тексти нотаток, `@example.test`, `+380` — 0 збігів; є лише
+    попередження `Missing origin header from a forwarded Server Actions request` від наших curl-запитів без
+    заголовка `Origin` (браузер його надсилає).
 
 ## Task C — `integrating-n8n-webhooks`
 
