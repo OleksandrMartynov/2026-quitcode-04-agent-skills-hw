@@ -108,14 +108,17 @@ export async function addLeadNote(
   _prevState: AddLeadNoteState,
   formData: FormData,
 ): Promise<AddLeadNoteState> {
+  const typed = formData.get("note");
+  const values = { note: typeof typed === "string" ? typed : "" };
+
   const lead = await findOwnLead(formData.get("leadId"));
-  if (!lead) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values: {} };
+  if (!lead) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values };
 
   const parsed = parseLeadNote(formData);
   if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
 
   const saved = await db.appendLeadNote(lead.id, parsed.note);
-  if (!saved) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values: {} };
+  if (!saved) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values };
 
   after(() => logAudit("lead.note_added", lead.id));
   revalidatePath(`/dashboard/leads/${lead.id}`);
