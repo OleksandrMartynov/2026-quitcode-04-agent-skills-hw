@@ -51,7 +51,7 @@ export type Lead = {
   updatedAt: string;
 };
 
-/** What the dashboard table renders; the only lead fields that cross into the browser. */
+/** Lead fields the dashboard table receives as RSC props (search loads its own set from /api/leads). */
 export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
 
 export type NewLead = Omit<
