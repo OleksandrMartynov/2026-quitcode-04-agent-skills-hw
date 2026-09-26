@@ -182,9 +182,22 @@ type Callback = {
 function parseCallback(raw: string): Callback | null {
   try {
     const body = JSON.parse(raw);
-    return body?.version === 1 && typeof body.event === "string" && typeof body.data?.jobId === "string" ? body : null;
+    const data = body?.data;
+    if (body?.version !== 1 || typeof body.event !== "string" || typeof data?.jobId !== "string") return null;
+    if (data.status !== "completed" && data.status !== "failed") return null;
+    // the link ends up on a page: only https, never javascript: or data:
+    if (data.result?.documentUrl !== undefined && !isHttpsUrl(data.result.documentUrl)) return null;
+    return body;
   } catch {
     return null;
+  }
+}
+
+function isHttpsUrl(value: unknown) {
+  try {
+    return typeof value === "string" && new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 ```

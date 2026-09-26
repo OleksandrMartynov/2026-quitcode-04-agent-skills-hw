@@ -398,7 +398,7 @@ function n8nFetches(file) {
 }
 
 // fetch(url) where url is a parameter (or its property): look at what the callers pass —
-// e.g. dispatch(quote, { webhookUrl }) with webhookUrl = process.env.N8N_QUOTE_WEBHOOK_URL in the caller
+// e.g. dispatch(record, { webhookUrl }) with webhookUrl = process.env.N8N_<EVENT>_WEBHOOK_URL in the caller
 function urlFromCallers(file, call, firstCode) {
   const root = firstCode.trim().match(/^([A-Za-z_$][\w$]*)(?:\.[\w$]+)*$/)?.[1];
   if (!root || definitionOf(file, root, call.start)) return false;
@@ -516,7 +516,7 @@ function exportsPost(f) {
   return /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b|export\s*\{[^}]*\bPOST\b[^}]*\}/.test(f.code);
 }
 const CALLBACK_HINT = /n8n|webhook|workflow|\bjobs?\b|jobId|job_id|x-[\w-]*signature|x-[\w-]*timestamp|idempotency-key|createHmac|timingSafeEqual/i;
-// routes that a callbackUrl built next to the n8n call points at: "/api/quotes/${id}/callback" -> app/api/quotes/[id]/callback
+// routes that a callbackUrl built next to the n8n call points at: "/api/<things>/${id}/callback" -> app/api/<things>/[id]/callback
 const callbackPaths = files.filter((f) => /\bcallbackUrl\b/.test(f.code)).flatMap((f) =>
   [...f.code.matchAll(/["'\x60](\/api\/[^"'\x60\s]*)["'\x60]/g)].map((m) =>
     new RegExp(`(^|/)app${m[1].split(/\$\{[^}]*\}/).map((x) => x.replace(/[.*+?^()|[\]\\]/g, "\\$&")).join("[^/]+")}/route\\.[jt]sx?$`)));
