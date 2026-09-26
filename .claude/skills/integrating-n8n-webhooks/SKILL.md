@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.3"
+  version: "0.4.4"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -140,6 +140,9 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
 - потрібне значення секрету — `.env*` (крім `.env.example`) не відкривай, спитай людину.
 
 ## Verify — інтеграція готова, лише коли:
+
+Команди запускай з кореня проєкту саме в такому вигляді — без `--prefix`, абсолютних шляхів і `; echo`: у сесії
+з обмеженими дозволами інакше вони не збігаються з дозволеними й не виконаються. Не вдалося запустити — так і напиши.
 
 - [ ] `node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs` → 0 FAIL, код виходу 0.
 - [ ] `npm run lint` і `npm run build` без помилок.
