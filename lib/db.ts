@@ -5,6 +5,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -35,6 +37,13 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  findQuoteForCallback: 80,
+  setQuoteJob: 80,
+  finishQuote: 80,
+  claimCallbackKey: 20,
+  releaseCallbackKey: 20,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -268,6 +277,12 @@ function createStore(): Store {
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
 
+// Quotes live in their own global so a store created before they existed keeps working in `next dev`.
+// callbackKeys stands in for a table with a unique constraint on the callback idempotency-key.
+type QuoteStore = { quotes: Quote[]; callbackKeys: Set<string> };
+const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: QuoteStore };
+const quoteStore = (globalForQuotes.leadDeskQuotes ??= { quotes: [], callbackKeys: new Set() });
+
 const SESSION_PREFIX = "demo-";
 
 export const db = {
@@ -382,5 +397,85 @@ export const db = {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
     });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // The status page is public, so the id must not be guessable.
+        id: crypto.randomUUID(),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      quoteStore.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  /** The quote a callback belongs to: by n8n jobId, or by our request key if the 202 was not saved yet. */
+  findQuoteForCallback(jobId: string, requestIdempotencyKey: string | null) {
+    return query("findQuoteForCallback", () => {
+      const quote = quoteStore.quotes.find(
+        (q) =>
+          q.jobId === jobId ||
+          (requestIdempotencyKey !== null && q.idempotencyKey === requestIdempotencyKey && q.jobId === null),
+      );
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  /** n8n accepted the request. The callback may already have finished the quote, so only queued moves on. */
+  setQuoteJob(id: string, jobId: string | null) {
+    return query("setQuoteJob", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      quote.jobId ??= jobId;
+      if (quote.status === "queued") quote.status = "processing";
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  finishQuote(
+    id: string,
+    outcome: { status: "ready"; documentUrl: string } | { status: "failed"; errorCode: string },
+    jobId: string | null = null,
+  ) {
+    return query("finishQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      quote.jobId ??= jobId;
+      quote.status = outcome.status;
+      quote.documentUrl = outcome.status === "ready" ? outcome.documentUrl : null;
+      quote.errorCode = outcome.status === "failed" ? outcome.errorCode : null;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  /** Atomically records a callback key; false if it was already there. */
+  claimCallbackKey(key: string) {
+    return query("claimCallbackKey", () => {
+      if (quoteStore.callbackKeys.has(key)) return false;
+      quoteStore.callbackKeys.add(key);
+      return true;
+    });
+  },
+
+  releaseCallbackKey(key: string) {
+    return query("releaseCallbackKey", () => quoteStore.callbackKeys.delete(key));
   },
 };

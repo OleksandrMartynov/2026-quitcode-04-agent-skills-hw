@@ -33,7 +33,7 @@ export type ParseResult =
   | { ok: true; data: LeadFormData }
   | { ok: false; errors: Partial<Record<LeadFormField, string>> };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const EMAIL_RE =/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[0-9 ()-]{7,20}$/;
 
 function text(formData: FormData, name: LeadFormField, max = 200) {

@@ -96,6 +96,28 @@ export type SourceCount = {
   count: number;
 };
 
+export type QuoteStatus = "queued" | "processing" | "ready" | "failed";
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  /** Key of the outgoing n8n request: created once with the quote, reused by every retry. */
+  idempotencyKey: string;
+  correlationId: string;
+  /** n8n execution id from the 202 response. */
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId">;
+
 export type AuditEntry = {
   action: string;
   leadId: string;
