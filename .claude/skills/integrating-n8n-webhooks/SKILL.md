@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.6"
+  version: "0.4.7"
 ---
 
 # Next.js ↔ n8n: контракт команди

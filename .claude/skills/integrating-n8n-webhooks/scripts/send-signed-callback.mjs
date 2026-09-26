@@ -20,7 +20,7 @@ const HELP = `send-signed-callback.mjs — матриця підписаних �
 
 Випадки й очікувані коди (порядок важливий — валідний колбек іде після негативних):
   невідома подія → 404 · не-json → 415 · тіло > 64 KB → 413 · без заголовків підпису → 401
-  прострочений (−301 с) і майбутній (+301 с) час → 401 · хибний підпис → 401
+  прострочений (−305 с) і майбутній (+305 с) час → 401 · хибний підпис → 401
   тіло переформатоване після підпису → 401 · валідний → 202 · той самий повтор → 200 { duplicate }
   ключ ≠ jobId:event → 400 · той самий запит ще раз → 400 (ключ звільнено, не duplicate)
   подія в тілі ≠ шлях → 400
@@ -94,8 +94,9 @@ const cases = [
   ["content-type не json", 415, () => send({ raw: validRaw, key: validKey, contentType: "text/plain" })],
   ["тіло > 64 KB", 413, () => { const raw = body({ pad: 70 * 1024 }); return send({ raw, key: validKey }); }],
   ["без x-n8n-timestamp і x-n8n-signature", 401, () => send({ raw: validRaw, key: validKey, omitAuth: true })],
-  ["час −301 с", 401, () => { const ts = now() - 301; return send({ raw: validRaw, ts, key: validKey }); }],
-  ["час +301 с", 401, () => { const ts = now() + 301; return send({ raw: validRaw, ts, key: validKey }); }],
+  // ±305, not ±301: now() is floored to whole seconds, so +301 can land 300.x s ahead — inside the window
+  ["час −305 с", 401, () => { const ts = now() - 305; return send({ raw: validRaw, ts, key: validKey }); }],
+  ["час +305 с", 401, () => { const ts = now() + 305; return send({ raw: validRaw, ts, key: validKey }); }],
   ["хибний підпис (інший секрет)", 401, () => { const ts = now(); return send({ raw: validRaw, ts, key: validKey, signature: sign(ts, validRaw, `${secret}-wrong`) }); }],
   ["тіло переформатоване після підпису", 401, () => { const ts = now(); return send({ raw: validRaw, ts, key: validKey, sendRaw: JSON.stringify(JSON.parse(validRaw), null, 2) }); }],
   ["валідний колбек", 202, () => send({ raw: validRaw, key: validKey })],
