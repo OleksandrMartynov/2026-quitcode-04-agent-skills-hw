@@ -14,7 +14,8 @@
 - `data`: `quoteId`, `company`, `email`, `description`, `budget` (число або `null`).
 - Воркфлоу працює 40–90 с, тому відповідь — 202 одразу, результат — підписаним колбеком:
   `data.status = "completed"` з `result.documentUrl` (лише `https:`) або `"failed"` з `error.code`.
-- Статус: `/quotes/[id]` (`queued` → `processing` → `ready` | `failed`), сторінка оновлюється кожні 5 с.
+- Статус: `/quotes/[id]` (`queued` → `processing` → `ready` | `failed`), сторінка оновлюється кожні 5 с; якщо колбека немає
+  5 хвилин, опитування зупиняється й сторінка каже, що кошторис запізнюється (пізній колбек усе одно приймається).
 
 ## `lead-created`
 
