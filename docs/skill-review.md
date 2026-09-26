@@ -121,6 +121,11 @@ _Дописано після кроку 5 walkthrough (рев'ю застосу�
 
 ## 6. Закріплення версії й коміт
 
+**Коротко:** файли скіла й `skills-lock.json` у git ідентичні результату встановлення, яке я запустив сам у
+звичайному терміналі (`git diff --stat 084f9ff 07a1a76 -- .claude/skills/vercel-react-best-practices skills-lock.json` —
+порожньо; запис сесії — `~/ws4-runs/taskA-cli-install-human.txt`). Перший запуск (коміт `084f9ff`) зробив агент — це
+відхилення від walkthrough, подробиці нижче.
+
 - Команда встановлення (за walkthrough — у звичайному терміналі, не через агента):
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`
   (scope — Project). `#<тег>` — закріплена версія; `--copy` — справжні файли замість symlink/junction;
