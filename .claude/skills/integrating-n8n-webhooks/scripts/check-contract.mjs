@@ -59,8 +59,10 @@ const HELP = `check-contract.mjs — статична перевірка код�
     CALLBACK_SECRET/WORKFLOW у назві скрипт не бачить;
   - модулі n8n — файли з таким fetch і ті, що імпортують їх (транзитивно); виклик імпортованої
     звідти функції — запуск воркфлоу;
+  - URL у fetch може прийти параметром: тоді дивимось, що передають місця виклику функції;
   - колбек — POST у app/**/route.*, де шлях чи код згадує n8n, webhook, workflow, job(s), jobId,
-    x-…-signature, x-…-timestamp, idempotency-key, createHmac чи timingSafeEqual;
+    x-…-signature, x-…-timestamp, idempotency-key, createHmac чи timingSafeEqual, або на шлях якого
+    вказує callbackUrl, зібраний у коді ("/api/…/\${id}/callback");
   - теки tools/, materials/, docs/, build/, out/, coverage/, fixtures/ пропускаються лише в корені.
   Скрипт не замінює рев'ю: він ловить типові порушення, а не доводить відповідність.
 
@@ -390,8 +392,22 @@ function n8nFetches(file) {
     const firstCode = file.code.slice(...call.args[0]);
     if (mentionsN8n(file, firstCode)) return true;
     const literalRelative = /^\s*["'`]\//.test(firstCode);
-    return readsN8n && !literalRelative;
+    if (readsN8n && !literalRelative) return true;
+    return urlFromCallers(file, call, firstCode);
   });
+}
+
+// fetch(url) where url is a parameter (or its property): look at what the callers pass —
+// e.g. dispatch(quote, { webhookUrl }) with webhookUrl = process.env.N8N_QUOTE_WEBHOOK_URL in the caller
+function urlFromCallers(file, call, firstCode) {
+  const root = firstCode.trim().match(/^([A-Za-z_$][\w$]*)(?:\.[\w$]+)*$/)?.[1];
+  if (!root || definitionOf(file, root, call.start)) return false;
+  const fn = enclosingFunctionStart(file, call.start);
+  if (!fn?.name) return false;
+  return files.some((caller) => callsOf(caller, fn.name).some((c) => {
+    if (caller === file && c.start > fn.brace && c.start < fn.end) return false;
+    return c.args.some(([a, b]) => mentionsN8n(caller, caller.code.slice(a, b)));
+  }));
 }
 
 const fetchSites = files.flatMap((f) => n8nFetches(f).map((call) => ({ file: f, call })));
@@ -429,29 +445,66 @@ function importClauses(file) {
   return out;
 }
 
-// n8n modules: files with an n8n fetch, plus files that import them (fixed point)
-const n8nModules = new Set(clientFiles);
-const isN8nClientPath = (spec) => /n8n[/-]?client|webhook|workflow/i.test(spec);
-for (let changedSet = true; changedSet;) {
-  changedSet = false;
-  for (const f of files) {
-    if (n8nModules.has(f) || firstStatement(f) === "use client") continue;
-    if (importClauses(f).some((imp) => imp.target && n8nModules.has(imp.target) && imp.names.length && callsOf(f, imp.names.join("|")).length)) {
-      n8nModules.add(f); changedSet = true;
+// trigger functions: functions of a module whose body reaches the n8n fetch — directly, through another
+// trigger of the same module, or through a trigger imported from another module (memoised, cycle-safe)
+const triggerMemo = new Map();
+function declaredFunctions(file) {
+  const names = new Set();
+  for (const m of file.blank.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(/g)) names.add(m[1]);
+  for (const m of file.blank.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>/g)) names.add(m[1]);
+  return [...names];
+}
+function moduleTriggers(file) {
+  if (triggerMemo.has(file)) return triggerMemo.get(file);
+  const result = new Set();
+  triggerMemo.set(file, result); // cycle guard
+  const fetches = n8nFetches(file).map((c) => c.start);
+  const imported = [];
+  for (const imp of importClauses(file)) {
+    if (!imp.names.length) continue;
+    if (imp.target) { const t = moduleTriggers(imp.target); imported.push(...imp.names.filter((n) => t.has(n) || /\\\.\\w\+$/.test(n))); }
+    else if (isN8nClientPath(imp.spec)) imported.push(...imp.names);
+  }
+  const importedCalls = imported.length ? callsOf(file, imported.join("|")).map((c) => c.start) : [];
+  const fns = declaredFunctions(file).map((name) => ({ name, body: functionBody(file, name) })).filter((x) => x.body);
+  for (let grew = true; grew;) {
+    grew = false;
+    const localCalls = result.size ? callsOf(file, [...result].join("|")).map((c) => c.start) : [];
+    for (const { name, body } of fns) {
+      if (result.has(name)) continue;
+      const inside = (i) => i > body.start && i < body.end;
+      if (fetches.some(inside) || importedCalls.some(inside) || localCalls.some(inside)) { result.add(name); grew = true; }
     }
   }
+  return result;
+}
+const isN8nClientPath = (spec) => /n8n[/-]?client|webhook|workflow/i.test(spec);
+// names imported into `file` that start an n8n workflow
+function triggerImports(file) {
+  const out = [];
+  for (const imp of importClauses(file)) {
+    if (!imp.names.length) continue;
+    const names = imp.target ? imp.names.filter((n) => moduleTriggers(imp.target).has(n)) : (isN8nClientPath(imp.spec) ? imp.names : []);
+    if (names.length) out.push({ ...imp, names });
+  }
+  return out;
+}
+// n8n modules: files with an n8n fetch, plus files that call a trigger function of another module
+const n8nModules = new Set(clientFiles);
+for (const f of files) {
+  if (firstStatement(f) === "use client") continue;
+  if (triggerImports(f).some((imp) => callsOf(f, imp.names.join("|")).length)) n8nModules.add(f);
 }
 
 function importsFromN8n(file) {
-  return importClauses(file).filter((imp) => (imp.target ? n8nModules.has(imp.target) : isN8nClientPath(imp.spec)));
+  return triggerImports(file);
 }
 
-// all n8n trigger sites: direct fetches + calls of functions imported from n8n modules
+// all n8n trigger sites: direct fetches + calls of trigger functions imported from other modules
 // (kind "client" — the imported module itself fetches n8n, so its arguments are the data sent)
 function triggerSites(file) {
   const sites = n8nFetches(file).map((call) => ({ call, kind: "fetch" }));
   for (const imp of importsFromN8n(file)) {
-    if (!imp.names.length) continue;
     const kind = !imp.target || clientFiles.includes(imp.target) ? "client" : "import";
     for (const call of callsOf(file, imp.names.join("|"))) sites.push({ call, kind });
   }
@@ -463,7 +516,12 @@ function exportsPost(f) {
   return /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b|export\s*\{[^}]*\bPOST\b[^}]*\}/.test(f.code);
 }
 const CALLBACK_HINT = /n8n|webhook|workflow|\bjobs?\b|jobId|job_id|x-[\w-]*signature|x-[\w-]*timestamp|idempotency-key|createHmac|timingSafeEqual/i;
-const callbackRoutes = files.filter((f) => isRouteFile(f) && exportsPost(f) && (CALLBACK_HINT.test(f.path) || CALLBACK_HINT.test(f.code)));
+// routes that a callbackUrl built next to the n8n call points at: "/api/quotes/${id}/callback" -> app/api/quotes/[id]/callback
+const callbackPaths = files.filter((f) => /\bcallbackUrl\b/.test(f.code)).flatMap((f) =>
+  [...f.code.matchAll(/["'\x60](\/api\/[^"'\x60\s]*)["'\x60]/g)].map((m) =>
+    new RegExp(`(^|/)app${m[1].split(/\$\{[^}]*\}/).map((x) => x.replace(/[.*+?^()|[\]\\]/g, "\\$&")).join("[^/]+")}/route\\.[jt]sx?$`)));
+const callbackRoutes = files.filter((f) => isRouteFile(f) && exportsPost(f)
+  && (CALLBACK_HINT.test(f.path) || CALLBACK_HINT.test(f.code) || callbackPaths.some((re) => re.test(f.path.replace(/\/\([^)]*\)/g, "")))));
 
 // route + its local imports (one hop) for checks that may live in helpers
 function withHelpers(route) {
@@ -872,12 +930,30 @@ check("C8", "Тіло — конверт { version, event, data } з мінім�
     }
   }
   for (const f of files) for (const site of triggerSites(f).filter((s) => s.kind === "client")) {
-    for (const [a, b] of site.call.args) {
+    site.call.args.forEach(([a, b], index) => {
       const reason = wholeDataReason(f, f.code.slice(a, b), site.call.start);
-      if (reason) atCall(add, f, site.call, reason);
-    }
+      if (!reason) return;
+      // a whole record passed to a client function that only reads fields of it is fine
+      if (/цілий об'єкт|розгортається/.test(reason) && !calleeSendsWhole(f, site.call, index)) return;
+      atCall(add, f, site.call, reason);
+    });
   }
 });
+
+// does the called client function send its index-th parameter whole (JSON.stringify(p), ...p, data: p, { p })?
+function calleeSendsWhole(file, call, index) {
+  const name = file.blank.slice(call.start, call.open).trim();
+  const imp = importClauses(file).find((i) => i.target && i.names.includes(name));
+  const target = imp?.target ?? file;
+  const decl = new RegExp(`function\\s+${name}\\s*\\(`).exec(target.blank);
+  if (!decl) return true; // unknown callee: keep the finding
+  const params = argSpans(target.blank, decl.index + decl[0].length - 1).map((sp) => target.code.slice(...sp).trim());
+  const param = params[index]?.match(/^([A-Za-z_$][\w$]*)/)?.[1];
+  if (!param) return false; // destructured parameter: only named fields are used
+  const body = functionBody(target, name);
+  const text = body ? target.code.slice(body.start, body.end + 1) : "";
+  return new RegExp(`JSON\\.stringify\\(\\s*${param}\\s*[,)]|\\.\\.\\.\\s*${param}\\b|\\bdata\\s*:\\s*${param}\\b|[{,]\\s*${param}\\s*[,}]`).test(text);
+}
 
 // C9
 function actionSpans(f) {
