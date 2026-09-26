@@ -6,7 +6,7 @@
 | event | напрям | шлях n8n | режим | власник |
 |---|---|---|---|---|
 | `quote-request` | Next.js → n8n → колбек `/api/n8n/quote-request` | `/webhook/quote-request` | Respond to Webhook 202 `{"job_id"}` + колбек `quote-request.completed` | уточнити |
-| `lead-created` | Next.js → n8n | `/webhook-test/lead-created` (`N8N_WEBHOOK_URL`) | — | уточнити; ще не за контрактом, див. нижче |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately, 200; без колбека | уточнити |
 
 ## `quote-request`
 
@@ -16,8 +16,9 @@
   `data.status = "completed"` з `result.documentUrl` (лише `https:`) або `"failed"` з `error.code`.
 - Статус: `/quotes/[id]` (`queued` → `processing` → `ready` | `failed`), сторінка оновлюється кожні 5 с.
 
-## `lead-created` — борг
+## `lead-created`
 
-`submitLead` (`app/actions.ts`) шле в n8n весь запис ліда (IP, user agent, `rawPayload`) на тестовий URL
-без токена, таймауту й повторів і чекає n8n у Server Action. Перехід на `lib/n8n/client.ts` змінить формат
-тіла, тож його треба узгодити з власником воркфлоу `lead-created`.
+- Запускає: Server Action `submitLead` (`app/actions.ts`) з публічної форми ліда, виклик — `triggerWorkflow` в `after()`.
+- `data`: `leadId`, `source`, `company`, `budget` — без email, телефону, IP, user agent і сирих даних форми.
+  Раніше в n8n ішов увесь запис ліда на `/webhook-test/`; новий формат тіла треба узгодити з власником воркфлоу
+  (Webhook: шлях `lead-created`, Header Auth `x-n8n-token`, Immediately, дані — у `$json.body.data`).
