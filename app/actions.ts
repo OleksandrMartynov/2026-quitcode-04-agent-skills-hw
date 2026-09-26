@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -8,6 +9,7 @@ import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import { parseLeadNote, type LeadNoteField } from "@/lib/lead-note";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -53,15 +55,17 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // lead-created is an informational event (Webhook "Immediately", no callback): the form does not wait
+  // for n8n, and n8n gets only what the workflow needs — no email, phone, IP or raw form payload.
+  const ids = { idempotencyKey: randomUUID(), correlationId: randomUUID() }; // once per lead, same in retries
+  after(async () => {
+    const result = await triggerWorkflow(
+      "lead-created",
+      { leadId: lead.id, source: lead.source, company: lead.company, budget: lead.budget },
+      ids,
+    );
+    if (!result.ok) console.error("n8n.out", { event: "lead-created", correlationId: ids.correlationId, status: result.status, error: "delivery_failed" });
+  });
 
   await logAudit("lead.created", lead.id);
 
