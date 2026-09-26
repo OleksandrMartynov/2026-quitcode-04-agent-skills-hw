@@ -16,8 +16,17 @@
 |---|---|---|
 | `vercel-react-best-practices` | Project | рядок `vercel-react-best-practices \| Project \| ~120` у розділі Skills `/context` |
 
-Рядки `building-client-form` і `integrating-n8n-webhooks` додаються, коли з'являться ці скіли (Task B, C);
-повну таблицю для всіх трьох ще раз знімаємо на коміті BASE перед Task D.
+**Усі три скіли (коміт `75d33bb`, перед BASE; сесія `054bb5e5…`, `claude -p "/context"` через `~/ws4-runs/run.sh`):**
+
+| Skill | Звідки (Project / Personal / вбудований) | Примітка |
+|---|---|---|
+| `building-client-form` | Project | рядок `building-client-form \| Project \| ~310` у розділі Skills `/context` |
+| `integrating-n8n-webhooks` | Project | рядок `integrating-n8n-webhooks \| Project \| ~350` у розділі Skills `/context` |
+| `vercel-react-best-practices` | Project | рядок `vercel-react-best-practices \| Project \| ~120` у розділі Skills `/context` |
+
+Решта розділу Skills — 13 вбудованих (`dataviz`, `update-config`, `keybindings-help`, `code-review`, `simplify`,
+`fewer-permission-prompts`, `loop`, `schedule`, `claude-api`, `workflow-authoring`, `run`, `init`, `security-review`)
+і 9 синхронізованих з claude.ai (`anthropic-skills:*`); у списку `skills` init-події — 31 назва.
 
 - Особисті скіли, які теж видно: `review-task` (`~/.claude/skills/review-task`, скіл рев'ю від викладача з
   `disable-model-invocation: true` — є в init-списку `skills`, але не в розділі Skills `/context`, тобто модель
