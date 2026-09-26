@@ -70,7 +70,7 @@ export async function submitLead(
     if (!result.ok) console.error("n8n.out", { event: "lead-created", correlationId: ids.correlationId, status: result.status, error: "delivery_failed" });
   });
 
-  await logAudit("lead.created", lead.id);
+  after(() => logAudit("lead.created", lead.id)); // the visitor does not wait for the audit write
 
   return { status: "ok" };
 }
