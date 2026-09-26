@@ -49,6 +49,9 @@ export type Lead = {
   internalNotes: string;
   createdAt: string;
   updatedAt: string;
+  /** lead-created ids for n8n: created once with the lead, the same on any re-send of the event. */
+  n8nIdempotencyKey?: string;
+  n8nCorrelationId?: string;
 };
 
 /** Lead fields the dashboard table receives as RSC props (search loads its own set from /api/leads). */

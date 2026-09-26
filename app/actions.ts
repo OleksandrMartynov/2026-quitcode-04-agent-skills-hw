@@ -34,6 +34,9 @@ export async function submitLead(
 
   const lead = await db.insertLead({
     ...parsed.data,
+    // lead-created ids: once per lead, stored with it (team n8n contract), reused in retries and re-sends
+    n8nIdempotencyKey: randomUUID(),
+    n8nCorrelationId: randomUUID(),
     workspaceId: PUBLIC_FORM_WORKSPACE_ID,
     jobTitle: "",
     city: "",
@@ -57,7 +60,7 @@ export async function submitLead(
 
   // lead-created is an informational event (Webhook "Immediately", no callback): the form does not wait
   // for n8n, and n8n gets only what the workflow needs — no email, phone, IP or raw form payload.
-  const ids = { idempotencyKey: randomUUID(), correlationId: randomUUID() }; // once per lead, same in retries
+  const ids = { idempotencyKey: lead.n8nIdempotencyKey!, correlationId: lead.n8nCorrelationId! };
   after(async () => {
     const result = await triggerWorkflow(
       "lead-created",
