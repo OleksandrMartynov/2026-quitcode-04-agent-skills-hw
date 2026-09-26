@@ -12,27 +12,31 @@ const WINDOW_SECONDS = 300;
 export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) {
   const started = Date.now();
   const { event } = await ctx.params;
-  if (!KNOWN_EVENTS.has(event)) return Response.json({ error: "not_found" }, { status: 404 });
-  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
-    return Response.json({ error: "unsupported_media_type" }, { status: 415 });
-  }
-
-  const raw = await req.text(); // the raw body: the signature covers exactly these bytes
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 });
-
-  const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
-  const ts = Number(timestamp);
-  if (!/^\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - ts) > WINDOW_SECONDS) return unauthorized();
-  if (!verifySignature(timestamp, raw, req.headers.get("x-n8n-signature"))) return unauthorized();
-
-  const key = req.headers.get("idempotency-key");
-  if (!key) return Response.json({ error: "bad_request" }, { status: 400 });
-  if (!(await db.claimCallbackKey(key))) return Response.json({ duplicate: true }, { status: 200 });
-
+  let raw = "";
+  // Every answer, rejections included, is logged without body or signature: a silent 401 is hard to debug.
   const reply = (status: number, payload: Record<string, unknown>) => {
     logCallback(event, req.headers.get("x-correlation-id"), status, started, raw);
     return Response.json(payload, { status });
   };
+
+  if (!KNOWN_EVENTS.has(event)) return reply(404, { error: "not_found" });
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return reply(415, { error: "unsupported_media_type" });
+  }
+  // Cheap early refusal of a declared oversized body; the byte check below still covers chunked requests.
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return reply(413, { error: "too_large" });
+
+  raw = await req.text(); // the raw body: the signature covers exactly these bytes
+  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return reply(413, { error: "too_large" });
+
+  const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
+  const ts = Number(timestamp);
+  if (!/^\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - ts) > WINDOW_SECONDS) return reply(401, { error: "unauthorized" });
+  if (!verifySignature(timestamp, raw, req.headers.get("x-n8n-signature"))) return reply(401, { error: "unauthorized" });
+
+  const key = req.headers.get("idempotency-key");
+  if (!key) return reply(400, { error: "bad_request" });
+  if (!(await db.claimCallbackKey(key))) return reply(200, { duplicate: true });
 
   try {
     const body = parseCallback(raw);
@@ -62,10 +66,6 @@ function verifySignature(timestamp: string, raw: string, header: string | null) 
   const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex")}`);
   const given = Buffer.from(header);
   return given.length === expected.length && timingSafeEqual(given, expected);
-}
-
-function unauthorized() {
-  return Response.json({ error: "unauthorized" }, { status: 401 });
 }
 
 type Callback = {
