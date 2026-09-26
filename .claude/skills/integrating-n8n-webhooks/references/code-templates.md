@@ -25,7 +25,10 @@ export async function triggerWorkflow(
 ): Promise<TriggerResult> {
   const base = process.env.N8N_WEBHOOK_BASE_URL;
   const token = process.env.N8N_WEBHOOK_TOKEN;
-  if (!base || !token) throw new Error("n8n is not configured");
+  if (!base || !token) {
+    console.error("n8n.out", { event, error: "not_configured" }); // без throw: after() позначить запис failed
+    return { ok: false, status: null };
+  }
   const callbackUrl = options.callback
     ? new URL(`/api/n8n/${event}`, process.env.APP_BASE_URL).toString()
     : undefined;

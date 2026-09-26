@@ -15,26 +15,41 @@ const HELP = `check-contract.mjs — статична перевірка код�
   --root <тека>             що перевіряти (за замовчуванням — поточна тека)
   --changed-since <ref>     лише файли, змінені після <ref> (разом з новими, ще не доданими в git),
                             а в наявних файлах — лише знахідки на змінених рядках (git diff -U0 <ref>;
-                            знахідка до виклику fetch рахується, якщо змінено будь-який його рядок;
+                            знахідка до виклику рахується, якщо змінено будь-який його рядок;
                             знахідка «чого бракує у файлі» — якщо файл змінено)
   -h, --help                ця довідка
 
 Перевірки (деталі — SKILL.md і references/ цього скіла):
-  C1  тестовий URL /webhook-test/ у коді чи .env.example
+  C1  тестовий URL /webhook-test у коді чи .env.example
   C2  змінні N8N_* лише на сервері (NEXT_PUBLIC_, "use client", next.config env, секрет у query, фолбек секрету)
   C3  .env.example: ключі контракту, база на /webhook, секрети change-me-…, змінні з коду оголошено
   C4  виклики n8n лише з lib/n8n/client.* з import "server-only" першим рядком
-  C5  кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)
-  C6  заголовки content-type, x-n8n-token, idempotency-key (не генерується в заголовках), x-correlation-id
-  C7  відповідь n8n оцінюється за кодом; ≤ 3 спроби; повтор лише для мережі/таймауту/5xx/524
-  C8  тіло — конверт { version, event, data } без зайвих персональних і технічних полів
-  C9  Server Action не чекає n8n: виклик лише в after()
+  C5  кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000), сигнал створено в циклі повторів
+  C6  заголовки content-type, x-n8n-token, idempotency-key, x-correlation-id; ключ не генерується
+      в клієнті на кожен виклик і не збігається з correlation-id
+  C7  відповідь n8n оцінюється за кодом; ≤ 3 спроби; пауза між спробами; повтор лише для
+      мережі/таймауту/5xx/524, не для 4xx
+  C8  тіло — JSON.stringify({ version, event, data }); data без усієї форми, цілих записів,
+      IP, user agent, заголовків, сирих даних, секретів
+  C9  Server Action (файл чи функція з "use server") не чекає n8n: виклик лише в after()
   C10 жодного runtime = "edge"
-  C11 колбек читає сире тіло (.text()) і не парсить JSON до перевірки підпису
+  C11 колбек читає сире тіло (.text()) і не парсить JSON до timingSafeEqual (чи функції, що його викликає)
   C12 колбек перевіряє HMAC-SHA256 над \${timestamp}.\${raw}: довжина + timingSafeEqual, без ===
-  C13 колбек: вікно 300 с, claim idempotency-key, 200 duplicate, ключ = jobId:event, 202, стан до відповіді
+  C13 колбек: 404/415/413, вікно ≤ 300 с, ключ лише із заголовка, claim ключа до JSON.parse і його
+      звільнення, 200 duplicate, звірка ключа з jobId:event, 202, стан до відповіді
   C14 журнали без тіл, персональних даних і секретів
   C15 колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
+
+Як скрипт знаходить код n8n (евристики, не розбір TypeScript):
+  - вихідний виклик — fetch, у чиєму URL є змінна середовища з N8N/WEBHOOK/WORKFLOW у назві або
+    зі значенням у .env.example, що містить /webhook чи :5678, літерал з /webhook чи :5678, або
+    const з файлу, що бере їх (один крок); інші HTTP-клієнти (axios, ky) не розпізнаються —
+    тоді C4 падає, якщо в коді є інші ознаки n8n (lib/n8n/, x-n8n-token, callbackUrl);
+  - модулі n8n — файли з таким fetch і ті, що імпортують їх (транзитивно); виклик імпортованої
+    звідти функції — запуск воркфлоу;
+  - колбек — POST у app/**/route.*, де шлях чи код згадує n8n, callback, webhook, workflow, job(s),
+    jobId, x-…-signature, x-…-timestamp, createHmac чи timingSafeEqual.
+  Скрипт не замінює рев'ю: він ловить типові порушення, а не доводить відповідність.
 
 Результат: рядок на перевірку (PASS / FAIL / N/A), для FAIL — файл:рядок і причина.
 Код виходу: 0 — немає FAIL; 1 — є FAIL; 2 — помилка аргументів чи git.
@@ -156,7 +171,7 @@ function views(src) {
 }
 
 function loadFile(abs) {
-  const src = readFileSync(abs, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const src = readFileSync(abs, "utf8").replace(/^﻿/, "").replace(/\r\n/g, "\n");
   const { code, blank } = views(src);
   const lineStarts = [0];
   for (let k = 0; k < src.length; k++) if (src[k] === "\n") lineStarts.push(k + 1);
@@ -200,6 +215,7 @@ function callsOf(file, nameRe) {
   const out = [];
   const re = new RegExp(`(?<![\\w$.])(?:${nameRe})\\s*\\(`, "g");
   for (const m of file.blank.matchAll(re)) {
+    if (/function\s*\*?\s*$/.test(file.blank.slice(Math.max(0, m.index - 12), m.index))) continue; // a definition, not a call
     const open = m.index + m[0].length - 1;
     out.push({ start: m.index, open, close: closeOf(file.blank, open), args: argSpans(file.blank, open) });
   }
@@ -211,17 +227,126 @@ function firstStatement(file) {
   return m ? m[2] : null;
 }
 
+// end of the expression that starts at `from` (a statement end: `;`, or a line break at depth 0
+// that does not continue the expression)
+function exprEnd(text, from) {
+  let depth = 0;
+  for (let k = from; k < text.length; k++) {
+    const ch = text[k];
+    if ("({[".includes(ch)) depth++;
+    else if (")}]".includes(ch)) { if (depth === 0) return k; depth--; }
+    else if (depth === 0 && (ch === ";" || ch === ",")) return k;
+    else if (depth === 0 && ch === "\n") {
+      const before = text.slice(from, k).trimEnd();
+      const after = text.slice(k + 1).trimStart();
+      if (!/[=+\-*/%&|?:,(<>!]$/.test(before) && !/^[.?:+\-*/%&|]/.test(after)) return k;
+    }
+  }
+  return text.length;
+}
+
+// initialiser of `const|let|var NAME (: Type)? = …` in a file (the last one before `beforeIdx`, if given)
+function definitionOf(file, name, beforeIdx = Infinity) {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return null;
+  const re = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*(?::[^=;\\n]+)?=(?!=|>)\\s*`, "g");
+  let found = null;
+  for (const m of file.blank.matchAll(re)) {
+    if (m.index > beforeIdx) break;
+    const start = m.index + m[0].length;
+    found = { start, end: exprEnd(file.blank, start), declIdx: m.index };
+  }
+  if (!found) return null;
+  return { ...found, text: file.code.slice(found.start, found.end).trim() };
+}
+
+// body span of a function called NAME in the file (declaration or const arrow / function expression)
+function functionBody(file, name) {
+  const decl = new RegExp(`function\\s+${name}\\s*\\(`).exec(file.blank);
+  if (decl) {
+    const headClose = closeOf(file.blank, decl.index + decl[0].length - 1);
+    const brace = file.blank.indexOf("{", headClose);
+    if (brace !== -1) return { start: brace, end: closeOf(file.blank, brace) };
+  }
+  const def = definitionOf(file, name);
+  if (def) {
+    const arrow = file.blank.slice(def.start, def.end).search(/=>\s*\{|function\s*\([^)]*\)\s*\{/);
+    if (arrow !== -1) {
+      const brace = file.blank.indexOf("{", def.start + arrow);
+      return { start: brace, end: closeOf(file.blank, brace) };
+    }
+    return { start: def.start, end: def.end }; // expression-bodied arrow
+  }
+  return null;
+}
+
+// numeric value of an expression: literals with _, + - * /, parentheses, const names, ARR.length
+function evalNum(file, expr, depth = 0) {
+  if (depth > 4 || expr == null) return null;
+  let text = String(expr).trim().replace(/\s+as\s+const$/, "").replace(/(\d)_(?=\d)/g, "$1");
+  if (!text) return null;
+  text = text.replace(/(?<![\w$.])[A-Za-z_$][\w$]*(\.length)?/g, (id, len) => {
+    if (len) { const n = arrayLength(file, id.slice(0, -len.length), depth + 1); return n === null ? "NaN" : String(n); }
+    const def = definitionOf(file, id);
+    const v = def ? evalNum(file, def.text, depth + 1) : null;
+    return v === null ? "NaN" : String(v);
+  });
+  if (!/^[\d\s+\-*/().]+$/.test(text) || /NaN/.test(text)) return null;
+  return arithmetic(text);
+}
+
+// + - * / and parentheses over plain numbers; null if the text is anything else
+function arithmetic(text) {
+  const tokens = text.match(/\d+(?:\.\d+)?|[-+*/()]/g) ?? [];
+  if (tokens.join("") !== text.replace(/\s+/g, "")) return null;
+  let pos = 0;
+  const primary = () => {
+    const t = tokens[pos++];
+    if (t === "(") { const v = sum(); return tokens[pos++] === ")" ? v : NaN; }
+    if (t === "-") return -primary();
+    return t !== undefined && /^\d/.test(t) ? Number(t) : NaN;
+  };
+  const product = () => { let v = primary(); while (tokens[pos] === "*" || tokens[pos] === "/") v = tokens[pos++] === "*" ? v * primary() : v / primary(); return v; };
+  const sum = () => { let v = product(); while (tokens[pos] === "+" || tokens[pos] === "-") v = tokens[pos++] === "+" ? v + product() : v - product(); return v; };
+  const value = sum();
+  return pos === tokens.length && Number.isFinite(value) ? value : null;
+}
+
+// value text of the first `name:` property (or `name` shorthand -> the name itself) in an object text
+function propValue(text, name) {
+  const m = new RegExp(`(?<![\\w$.])${name}\\s*:\\s*`).exec(text);
+  if (m) { const start = m.index + m[0].length; return text.slice(start, exprEnd(text, start)).trim(); }
+  return new RegExp(`(?<![\\w$.:])${name}\\s*[,}]`).test(text) ? name : null;
+}
+
+function arrayLength(file, exprOrName, depth = 0) {
+  const text = String(exprOrName).trim();
+  if (text.startsWith("[")) {
+    const close = closeOf(text, 0);
+    if (close === -1) return null;
+    return text.slice(1, close).split(",").filter((x) => x.trim()).length;
+  }
+  const def = definitionOf(file, text);
+  return def && depth < 4 ? arrayLength(file, def.text, depth + 1) : null;
+}
+
 const files = walk(ROOT).map(loadFile);
 const byPath = new Map(files.map((f) => [f.path, f]));
 const envExamplePath = join(ROOT, ".env.example");
 const envExample = existsSync(envExamplePath)
   ? readFileSync(envExamplePath, "utf8").replace(/\r\n/g, "\n").split("\n")
   : null;
+const envValues = new Map();
+envExample?.forEach((l) => {
+  const m = l.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/);
+  if (m) envValues.set(m[1], m[2].trim().replace(/^["']|["']$/g, ""));
+});
 
 // ---------------------------------------------------------------- facts
 
 const ENV_RE = /process\.env(?:\.([A-Z0-9_]+)|\[\s*["'`]([A-Z0-9_]+)["'`]\s*\])/g;
 const N8N_ENV = /N8N|WEBHOOK|WORKFLOW/;
+const envLooksN8n = (name) => N8N_ENV.test(name) || /\/webhook|:5678/.test(envValues.get(name) ?? "");
+const N8N_LITERAL = /\/webhook(-test)?\b|:5678|n8n/i;
 
 function envReads(file) {
   const out = [];
@@ -229,16 +354,24 @@ function envReads(file) {
   return out;
 }
 
-// outgoing n8n fetch calls, independent of names: URL from an N8N/WEBHOOK/WORKFLOW env var,
-// a literal with /webhook or :5678, or a file that reads such a variable and fetches a non-relative URL
+function mentionsN8n(file, text, depth = 0) {
+  if (N8N_LITERAL.test(text)) return true;
+  for (const m of text.matchAll(ENV_RE)) if (envLooksN8n(m[1] ?? m[2])) return true;
+  if (depth >= 2) return false;
+  for (const id of new Set(text.replace(/(["'])(?:\\.|(?!\1).)*\1/g, "").match(/(?<![\w$.])[A-Za-z_$][\w$]*/g) ?? [])) {
+    const def = definitionOf(file, id);
+    if (def && mentionsN8n(file, def.text, depth + 1)) return true;
+  }
+  return false;
+}
+
+// outgoing n8n fetch calls (see HELP: "Як скрипт знаходить код n8n")
 function n8nFetches(file) {
-  const readsN8n = envReads(file).some((r) => N8N_ENV.test(r.name));
+  const readsN8n = envReads(file).some((r) => envLooksN8n(r.name));
   return callsOf(file, "fetch").filter((call) => {
     if (!call.args.length) return false;
-    const [a, b] = call.args[0];
-    const firstCode = file.code.slice(a, b);
-    if (/N8N_|n8n|\/webhook(-test)?\b|:5678/i.test(firstCode)) return true;
-    if (/process\.env\.[A-Z0-9_]*(WEBHOOK|WORKFLOW)/.test(firstCode)) return true;
+    const firstCode = file.code.slice(...call.args[0]);
+    if (mentionsN8n(file, firstCode)) return true;
     const literalRelative = /^\s*["'`]\//.test(firstCode);
     return readsN8n && !literalRelative;
   });
@@ -246,33 +379,6 @@ function n8nFetches(file) {
 
 const fetchSites = files.flatMap((f) => n8nFetches(f).map((call) => ({ file: f, call })));
 const clientFiles = [...new Set(fetchSites.map((s) => s.file))];
-
-// modules that call n8n: a local module that contains an n8n fetch, or (unresolved) a client-like path
-const isN8nClientPath = (spec) => /n8n[/-]?client|webhook|workflow/i.test(spec);
-function importsFromN8n(file) {
-  const out = [];
-  for (const m of file.code.matchAll(/import\s+(?!type\b)([\s\S]*?)\s+from\s+["']([^"']+)["']/g)) {
-    const spec = m[2];
-    const target = resolveImport(file, spec);
-    const n8nModule = target ? clientFiles.includes(target) : isN8nClientPath(spec);
-    if (!n8nModule) continue;
-    const names = [];
-    const clause = m[1];
-    const braces = clause.match(/\{([\s\S]*)\}/);
-    if (braces) for (const part of braces[1].split(",")) {
-      const p = part.trim().replace(/^type\s+/, "");
-      if (!p || part.trim().startsWith("type ")) continue;
-      const alias = p.split(/\s+as\s+/);
-      names.push((alias[1] ?? alias[0]).trim());
-    }
-    const def = clause.replace(/\{[\s\S]*\}/, "").replace(/,/g, " ").trim().split(/\s+/)[0];
-    if (def && def !== "*" && !def.startsWith("{")) names.push(def);
-    const ns = clause.match(/\*\s+as\s+(\w+)/);
-    if (ns) names.push(`${ns[1]}\\.\\w+`);
-    out.push({ spec, names: names.filter(Boolean) });
-  }
-  return out;
-}
 
 function resolveImport(file, spec) {
   let base;
@@ -285,12 +391,52 @@ function resolveImport(file, spec) {
   return null;
 }
 
+function importClauses(file) {
+  const out = [];
+  for (const m of file.code.matchAll(/import\s+(?!type\b)([\s\S]*?)\s+from\s+["']([^"']+)["']/g)) {
+    const clause = m[1];
+    const names = [];
+    const braces = clause.match(/\{([\s\S]*)\}/);
+    if (braces) for (const part of braces[1].split(",")) {
+      const p = part.trim();
+      if (!p || p.startsWith("type ")) continue;
+      const alias = p.split(/\s+as\s+/);
+      names.push((alias[1] ?? alias[0]).trim());
+    }
+    const def = clause.replace(/\{[\s\S]*\}/, "").replace(/,/g, " ").trim().split(/\s+/)[0];
+    if (def && def !== "*" && !def.startsWith("{")) names.push(def);
+    const ns = clause.match(/\*\s+as\s+(\w+)/);
+    if (ns) names.push(`${ns[1]}\\.\\w+`);
+    out.push({ spec: m[2], target: resolveImport(file, m[2]), names: names.filter(Boolean), index: m.index });
+  }
+  return out;
+}
+
+// n8n modules: files with an n8n fetch, plus files that import them (fixed point)
+const n8nModules = new Set(clientFiles);
+const isN8nClientPath = (spec) => /n8n[/-]?client|webhook|workflow/i.test(spec);
+for (let changedSet = true; changedSet;) {
+  changedSet = false;
+  for (const f of files) {
+    if (n8nModules.has(f) || firstStatement(f) === "use client") continue;
+    if (importClauses(f).some((imp) => imp.target && n8nModules.has(imp.target) && imp.names.length && callsOf(f, imp.names.join("|")).length)) {
+      n8nModules.add(f); changedSet = true;
+    }
+  }
+}
+
+function importsFromN8n(file) {
+  return importClauses(file).filter((imp) => (imp.target ? n8nModules.has(imp.target) : isN8nClientPath(imp.spec)));
+}
+
 // all n8n trigger sites: direct fetches + calls of functions imported from n8n modules
+// (kind "client" — the imported module itself fetches n8n, so its arguments are the data sent)
 function triggerSites(file) {
   const sites = n8nFetches(file).map((call) => ({ call, kind: "fetch" }));
   for (const imp of importsFromN8n(file)) {
     if (!imp.names.length) continue;
-    for (const call of callsOf(file, imp.names.join("|"))) sites.push({ call, kind: "import" });
+    const kind = !imp.target || clientFiles.includes(imp.target) ? "client" : "import";
+    for (const call of callsOf(file, imp.names.join("|"))) sites.push({ call, kind });
   }
   return sites;
 }
@@ -299,16 +445,13 @@ function isRouteFile(f) { return /(^|\/)app\/(.*\/)?route\.(ts|tsx|js|jsx|mjs|cj
 function exportsPost(f) {
   return /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b|export\s*\{[^}]*\bPOST\b[^}]*\}/.test(f.code);
 }
-const callbackRoutes = files.filter((f) => isRouteFile(f) && exportsPost(f)
-  && (/n8n|callback|webhook/i.test(f.path) || /x-n8n-|n8n|callback|webhook|jobId|job_id/i.test(f.code)));
+const CALLBACK_HINT = /n8n|callback|webhook|workflow|\bjobs?\b|jobId|job_id|x-[\w-]*signature|x-[\w-]*timestamp|createHmac|timingSafeEqual/i;
+const callbackRoutes = files.filter((f) => isRouteFile(f) && exportsPost(f) && (CALLBACK_HINT.test(f.path) || CALLBACK_HINT.test(f.code)));
 
 // route + its local imports (one hop) for checks that may live in helpers
 function withHelpers(route) {
   const out = [route];
-  for (const m of route.code.matchAll(/import\s+[\s\S]*?\s+from\s+["']([^"']+)["']/g)) {
-    const target = resolveImport(route, m[1]);
-    if (target && !out.includes(target)) out.push(target);
-  }
+  for (const imp of importClauses(route)) if (imp.target && !out.includes(imp.target)) out.push(imp.target);
   return out;
 }
 
@@ -323,24 +466,28 @@ function check(id, title, fn) {
 }
 
 const callEnd = (file, call) => file.lineOf(call.close === -1 ? call.start : call.close);
+const atCall = (add, file, call, reason) => add(file.path, file.lineOf(call.start), reason, "line", callEnd(file, call));
 
 // C1
-check("C1", "Тестовий URL /webhook-test/ відсутній у коді та .env.example", (add) => {
+check("C1", "Тестовий URL /webhook-test відсутній у коді та .env.example", (add) => {
   for (const f of files) {
-    for (const m of f.code.matchAll(/\/webhook-test\/(?:[\w.-]+|\$\{)/g)) add(f.path, f.lineOf(m.index), "тестовий URL вебхука в коді");
+    for (const m of f.code.matchAll(/\/webhook-test\b/g)) add(f.path, f.lineOf(m.index), "тестовий URL вебхука в коді");
   }
   envExample?.forEach((l, k) => {
-    if (!l.trim().startsWith("#") && /webhook-test/.test(l)) add(".env.example", k + 1, `ключ ${l.split("=")[0].trim()} містить /webhook-test/`);
+    if (!l.trim().startsWith("#") && /webhook-test/.test(l)) add(".env.example", k + 1, `ключ ${l.split("=")[0].trim()} містить /webhook-test`);
   });
 });
 
 // C2
 check("C2", "Змінні N8N_* лише на сервері", (add) => {
   for (const f of files) {
-    for (const m of f.code.matchAll(/NEXT_PUBLIC_N8N_\w*/g)) add(f.path, f.lineOf(m.index), "змінна NEXT_PUBLIC_N8N_* потрапить у клієнтський бандл");
+    for (const m of f.code.matchAll(/NEXT_PUBLIC_\w*(?:N8N|WEBHOOK|CALLBACK_SECRET|WORKFLOW)\w*/g)) add(f.path, f.lineOf(m.index), "змінна NEXT_PUBLIC_* для n8n потрапить у клієнтський бандл");
     if (firstStatement(f) === "use client") {
-      for (const r of envReads(f)) if (N8N_ENV.test(r.name)) add(f.path, f.lineOf(r.index), `"use client"-модуль читає process.env.${r.name}`);
-      for (const m of f.code.matchAll(/import\s+(?!type\b)[\s\S]*?\s+from\s+["']([^"']*(?:^|[/@])n8n(?:\/[^"']*)?)["']/g)) add(f.path, f.lineOf(m.index), `"use client"-модуль імпортує ${m[1]}`);
+      for (const r of envReads(f)) if (envLooksN8n(r.name)) add(f.path, f.lineOf(r.index), `"use client"-модуль читає process.env.${r.name}`);
+      for (const imp of importClauses(f)) {
+        if (imp.target && firstStatement(imp.target) === "use server") continue; // Server Action import is fine
+        if (/(^|[/@])n8n(\/|$)/.test(imp.spec) || (imp.target && n8nModules.has(imp.target))) add(f.path, f.lineOf(imp.index), `"use client"-модуль імпортує ${imp.spec}`);
+      }
     }
     if (/(^|\/)next\.config\.[a-z]+$/.test(f.path) && /\benv\s*:\s*\{[\s\S]*?N8N_/.test(f.code)) add(f.path, 1, "next.config env вбудовує N8N_* у клієнт");
     for (const m of f.code.matchAll(/[?&](token|secret|signature|sig)=/gi)) add(f.path, f.lineOf(m.index), `секрет у query string (${m[1]}=)`);
@@ -348,7 +495,7 @@ check("C2", "Змінні N8N_* лише на сервері", (add) => {
       add(f.path, f.lineOf(m.index), `літеральний фолбек для ${m[1]}`);
     }
   }
-  envExample?.forEach((l, k) => { if (/^\s*(export\s+)?NEXT_PUBLIC_N8N_/.test(l)) add(".env.example", k + 1, "ключ NEXT_PUBLIC_N8N_*"); });
+  envExample?.forEach((l, k) => { if (/^\s*(export\s+)?NEXT_PUBLIC_\w*(N8N|WEBHOOK|CALLBACK_SECRET|WORKFLOW)/.test(l)) add(".env.example", k + 1, "ключ NEXT_PUBLIC_* для n8n"); });
 });
 
 // C3
@@ -381,142 +528,275 @@ check("C3", ".env.example: ключі контракту з безпечними
 
 // C4
 check("C4", 'Виклики n8n лише з lib/n8n/client.* з import "server-only"', (add) => {
-  if (!fetchSites.length) return "викликів n8n у коді не знайдено";
+  if (!fetchSites.length) {
+    const hint = files.find((f) => /(^|\/)lib\/n8n\//.test(f.path) || /x-n8n-token|\bcallbackUrl\b/i.test(f.code));
+    if (hint) { add(hint.path, 1, "є ознаки інтеграції n8n, але виклику fetch до n8n не розпізнано — перевірте вручну (лише fetch, URL з N8N_WEBHOOK_BASE_URL)", "file"); return; }
+    return "викликів n8n у коді не знайдено";
+  }
   for (const { file, call } of fetchSites) {
-    if (!/(^|\/)lib\/n8n\/client\.(ts|mts|js|mjs)$/.test(file.path)) add(file.path, file.lineOf(call.start), "fetch до n8n поза lib/n8n/client.*", "line", callEnd(file, call));
+    if (!/(^|\/)lib\/n8n\/client\.(ts|mts|js|mjs)$/.test(file.path)) atCall(add, file, call, "fetch до n8n поза lib/n8n/client.*");
   }
   for (const f of clientFiles) {
-    if (!/^\s*import\s+(["'])server-only\1/.test(f.code)) add(f.path, 1, 'модуль, що викликає n8n, не починається з import "server-only"');
+    if (!/^\s*import\s+(["'])server-only\1/.test(f.code)) add(f.path, 1, 'модуль, що викликає n8n, не починається з import "server-only"', "file");
   }
 });
+
+// options object of a fetch call: the literal, or the initialiser of the identifier passed as `init`
+function fetchOptions(file, call) {
+  if (!call.args[1]) return { text: "", start: call.start };
+  const [a, b] = call.args[1];
+  const text = file.code.slice(a, b).trim();
+  if (/^[A-Za-z_$][\w$]*$/.test(text)) {
+    const def = definitionOf(file, text, call.start);
+    if (def) return { text: def.text, start: def.start, viaIdent: true };
+  }
+  return { text, start: a };
+}
+
+// the loop around a call: for (…) / while (…) / do { } while (…), with a braced body
+function enclosingLoop(file, idx) {
+  let best = null;
+  const consider = (loop) => { if (loop.bodyStart < idx && idx < loop.bodyEnd && (!best || loop.bodyStart > best.bodyStart)) best = loop; };
+  for (const m of file.blank.matchAll(/\b(for|while)\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const headClose = closeOf(file.blank, open);
+    if (headClose === -1) continue;
+    const bodyStart = file.blank.slice(headClose + 1).search(/\S/) + headClose + 1;
+    if (file.blank[bodyStart] !== "{") continue;
+    consider({ kind: m[1], head: file.code.slice(open + 1, headClose), start: m.index, bodyStart, bodyEnd: closeOf(file.blank, bodyStart) });
+  }
+  for (const m of file.blank.matchAll(/\bdo\s*\{/g)) {
+    const bodyStart = m.index + m[0].length - 1;
+    const bodyEnd = closeOf(file.blank, bodyStart);
+    const tail = /^\s*while\s*\(/.exec(file.blank.slice(bodyEnd + 1));
+    if (!tail) continue;
+    const open = bodyEnd + 1 + tail[0].length - 1;
+    consider({ kind: "while", head: file.code.slice(open + 1, closeOf(file.blank, open)), start: m.index, bodyStart, bodyEnd });
+  }
+  return best;
+}
+
+function enclosingFunctionStart(f, idx) {
+  let best = null;
+  for (const m of f.blank.matchAll(/function\s*\*?\s*([\w$]*)\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const headClose = closeOf(f.blank, open);
+    const brace = f.blank.indexOf("{", headClose);
+    const end = closeOf(f.blank, brace);
+    if (brace < idx && idx < end && (!best || brace > best.brace)) best = { name: m[1], brace, end };
+  }
+  for (const m of f.blank.matchAll(/(?:const|let|var)\s+([\w$]+)\s*(?::[^=;\n]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>\s*\{/g)) {
+    const brace = m.index + m[0].length - 1;
+    const end = closeOf(f.blank, brace);
+    if (brace < idx && idx < end && (!best || brace > best.brace)) best = { name: m[1], brace, end };
+  }
+  return best;
+}
 
 // C5
 check("C5", "Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)", (add) => {
   if (!fetchSites.length) return "викликів n8n у коді не знайдено";
   for (const { file, call } of fetchSites) {
-    const opts = call.args[1] ? file.code.slice(...call.args[1]) : "";
-    const line = file.lineOf(call.start);
-    let timeout = opts.match(/AbortSignal\.timeout\(\s*([\d_]+)?/);
+    const opts = fetchOptions(file, call);
+    let timeout = opts.text.match(/AbortSignal\.timeout\(\s*([^)]*)\)/);
+    let signalDefIdx = null;
     if (!timeout) {
-      const id = opts.match(/signal\s*:\s*([A-Za-z_$][\w$]*)/) ?? (/\bsignal\b(?!\s*:)/.test(opts) ? [null, "signal"] : null);
-      if (id) {
-        const def = file.code.match(new RegExp(`\\b${id[1]}\\s*=\\s*AbortSignal\\.timeout\\(\\s*([\\d_]+)?`));
-        if (def) {
-          timeout = def;
-          const defIdx = file.code.search(new RegExp(`\\b${id[1]}\\s*=\\s*AbortSignal\\.timeout`));
-          const loop = enclosingLoop(file, call.start);
-          if (loop && (defIdx < loop.bodyStart || defIdx > loop.bodyEnd)) add(file.path, file.lineOf(defIdx), "сигнал таймауту створено поза циклом повторів — наступні спроби без таймауту");
-        }
+      const id = opts.text.match(/\bsignal\s*:\s*([A-Za-z_$][\w$]*)/) ?? (/\bsignal\b(?!\s*:)/.test(opts.text) ? [null, "signal"] : null);
+      const def = id ? definitionOf(file, id[1], call.start) : null;
+      if (def) {
+        timeout = def.text.match(/AbortSignal\.timeout\(\s*([^)]*)\)/);
+        signalDefIdx = def.declIdx;
       }
     }
-    if (!timeout) { add(file.path, line, "fetch до n8n без signal: AbortSignal.timeout(...)", "line", callEnd(file, call)); continue; }
-    if (timeout[1] && Number(timeout[1].replace(/_/g, "")) > 10_000) add(file.path, line, "таймаут понад 10 000 мс", "line", callEnd(file, call));
+    if (!timeout) { atCall(add, file, call, "fetch до n8n без signal: AbortSignal.timeout(...)"); continue; }
+    const ms = evalNum(file, timeout[1]);
+    if (ms === null) atCall(add, file, call, "значення таймауту не розпізнано (очікується число чи const ≤ 10 000)");
+    else if (ms > 10_000) atCall(add, file, call, `таймаут ${ms} мс — понад 10 000`);
+    if (signalDefIdx !== null || opts.viaIdent) {
+      const loop = enclosingLoop(file, call.start);
+      const defIdx = signalDefIdx ?? file.code.lastIndexOf("AbortSignal.timeout", call.start);
+      if (loop && (defIdx < loop.bodyStart || defIdx > loop.bodyEnd)) add(file.path, file.lineOf(defIdx), "сигнал таймауту створено поза циклом повторів — наступні спроби без таймауту");
+    }
   }
 });
 
-function enclosingLoop(file, idx) {
-  let best = null;
-  for (const m of file.blank.matchAll(/\b(for|while)\s*\(/g)) {
-    const open = m.index + m[0].length - 1;
-    const headClose = closeOf(file.blank, open);
-    if (headClose === -1) continue;
-    const bodyStartBrace = file.blank.slice(headClose + 1).search(/\S/) + headClose + 1;
-    if (file.blank[bodyStartBrace] !== "{") continue;
-    const bodyEnd = closeOf(file.blank, bodyStartBrace);
-    if (bodyStartBrace < idx && idx < bodyEnd && (!best || bodyStartBrace > best.bodyStart)) {
-      best = { head: file.code.slice(open + 1, headClose), bodyStart: bodyStartBrace, bodyEnd };
-    }
-  }
-  return best;
-}
-
-function constValue(file, name) {
-  const m = file.code.match(new RegExp(`\\bconst\\s+${name}\\s*=\\s*([\\d_]+)\\b`));
-  if (m) return Number(m[1].replace(/_/g, ""));
-  const arr = file.code.match(new RegExp(`\\bconst\\s+${name}\\s*=\\s*\\[([^\\]]*)\\]`));
-  if (arr) return arr[1].split(",").filter((x) => x.trim()).length;
-  return null;
-}
-
 // C6
 const HEADER_NAMES = ["content-type", "x-n8n-token", "idempotency-key", "x-correlation-id"];
+const UUID_CALL = /\b(?:crypto\.)?(randomUUID|uuid|uuidv4|v4|nanoid)\s*\(|Date\.now\s*\(/;
 check("C6", "Заголовки контракту у виклику n8n", (add) => {
   if (!fetchSites.length) return "викликів n8n у коді не знайдено";
   for (const { file, call } of fetchSites) {
-    const lower = file.code.toLowerCase();
+    const opts = fetchOptions(file, call);
+    let headersText = opts.text;
+    const hid = propValue(opts.text, "headers");
+    if (hid && /^[A-Za-z_$][\w$]*$/.test(hid)) headersText += definitionOf(file, hid, call.start)?.text ?? "";
+    const lower = headersText.toLowerCase();
     const missing = HEADER_NAMES.filter((h) => !lower.includes(`"${h}"`) && !lower.includes(`'${h}'`));
-    if (missing.length) add(file.path, file.lineOf(call.start), `немає заголовків: ${missing.join(", ")}`, "line", callEnd(file, call));
-    for (const m of file.code.matchAll(/["']idempotency-key["']\s*:\s*(?:crypto\.)?(randomUUID|uuid|v4|nanoid|Date\.now)\s*\(/gi)) {
-      add(file.path, file.lineOf(m.index), "idempotency-key генерується в заголовках — у повторах і повторних операціях ключ буде інший");
+    if (missing.length) atCall(add, file, call, `немає заголовків: ${missing.join(", ")}`);
+    const value = (h) => headersText.match(new RegExp(`["']${h}["']\\s*:\\s*([^,}\\n]+)`, "i"))?.[1].trim();
+    const key = value("idempotency-key");
+    const corr = value("x-correlation-id");
+    if (key) {
+      const fn = enclosingFunctionStart(file, call.start);
+      const keyDef = /^[A-Za-z_$][\w$]*$/.test(key) ? definitionOf(file, key, call.start) : null;
+      const generated = UUID_CALL.test(key) || (keyDef && UUID_CALL.test(keyDef.text) && (!fn || (keyDef.declIdx > fn.brace && keyDef.declIdx < fn.end)));
+      if (generated) atCall(add, file, call, "idempotency-key генерується в клієнті на кожен виклик — має приходити з бізнес-операції (збережений із записом)");
+      if (corr && corr === key) atCall(add, file, call, "x-correlation-id збігається з idempotency-key — це різні ідентифікатори");
     }
   }
 });
 
 // C7
+function attemptsOf(file, loop) {
+  const head = loop.head.trim();
+  let m = head.match(/^(?:let|var)\s+([\w$]+)\s*=\s*([^;]+);\s*\1\s*(<=|<)\s*([^;]+);/);
+  if (m) {
+    const from = evalNum(file, m[2]); const to = evalNum(file, m[4]);
+    return from === null || to === null ? null : (m[3] === "<=" ? to - from + 1 : to - from);
+  }
+  m = head.match(/^(?:const|let|var)\s+[\w$[\]{},\s]+\s+of\s+([\s\S]+)$/);
+  if (m) return arrayLength(file, m[1].trim());
+  m = head.match(/^(\+\+|--)?([\w$]+)(\+\+|--)?\s*(<=|<)\s*([\s\S]+)$/);
+  if (m) {
+    const def = definitionOf(file, m[2], loop.start);
+    const from = def ? evalNum(file, def.text) : null; const to = evalNum(file, m[5]);
+    if (from === null || to === null) return null;
+    let n = m[4] === "<=" ? to - from + 1 : to - from;
+    if (m[1] === "++") n -= 1;
+    return n;
+  }
+  return null;
+}
+
+// `if (COND) STATEMENT` pairs inside [from, to)
+function ifStatements(file, from, to) {
+  const out = [];
+  for (const m of file.blank.slice(from, to).matchAll(/\bif\s*\(/g)) {
+    const open = from + m.index + m[0].length - 1;
+    const close = closeOf(file.blank, open);
+    if (close === -1) continue;
+    const s = file.blank.slice(close + 1).search(/\S/) + close + 1;
+    const end = file.blank[s] === "{" ? closeOf(file.blank, s) : exprEnd(file.blank, s);
+    out.push({ at: from + m.index, cond: file.code.slice(open + 1, close), stmt: file.code.slice(s, end + 1) });
+  }
+  return out;
+}
+
 check("C7", "Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524", (add) => {
   if (!fetchSites.length) return "викликів n8n у коді не знайдено";
   for (const { file, call } of fetchSites) {
-    const line = file.lineOf(call.start);
     const before = file.blank.slice(Math.max(0, call.start - 40), call.start);
     if (/(^|[;{}\n])\s*(await\s+|void\s+)?$/.test(before) && !/(=|return|\(|,|\?|:)\s*(await\s+)?$/.test(before)) {
-      add(file.path, line, "результат fetch до n8n відкидається — код статусу не перевіряється", "line", callEnd(file, call));
+      atCall(add, file, call, "результат fetch до n8n відкидається — код статусу не перевіряється");
     }
     const loop = enclosingLoop(file, call.start);
-    if (!loop) add(file.path, line, "немає повторів для мережевих помилок, таймауту, 5xx і 524", "line", callEnd(file, call));
-    else {
-      const body = file.code.slice(loop.bodyStart, loop.bodyEnd);
-      if (!/(>=|<)\s*500\b|>\s*499\b|\b524\b|\.status\s*>=\s*5\d\d/.test(body)) add(file.path, line, "повтори без перевірки на 5xx/524 — повторюватимуться й 4xx");
-      const h = loop.head.match(/let\s+\w+\s*=\s*(\d+)\s*;\s*\w+\s*(<=|<)\s*([\w.]+)(\s*\+\s*1)?/);
-      if (h) {
-        let bound = /^\d+$/.test(h[3]) ? Number(h[3]) : constValue(file, h[3].replace(/\.length$/, ""));
-        if (bound !== null) {
-          if (h[4]) bound += 1;
-          const attempts = h[2] === "<=" ? bound - Number(h[1]) + 1 : bound - Number(h[1]);
-          if (attempts > 3) add(file.path, line, `спроб більше трьох (${attempts})`);
-        }
-      }
+    const fn = enclosingFunctionStart(file, call.start);
+    const recursive = !loop && fn?.name && callsOf({ ...file, blank: file.blank.slice(0, fn.end) }, fn.name).some((c) => c.start > fn.brace);
+    if (!loop && !recursive) { atCall(add, file, call, "немає повторів для мережевих помилок, таймауту, 5xx і 524"); continue; }
+    const [from, to] = loop ? [loop.bodyStart, loop.bodyEnd] : [fn.brace, fn.end];
+    const body = file.code.slice(from, to);
+    if (!/(>=|<)\s*500\b|>\s*499\b|\b524\b|\.status\s*>=\s*5\d\d/.test(body)) atCall(add, file, call, "повтори без перевірки на 5xx/524 — повторюватимуться й 4xx");
+    for (const st of ifStatements(file, from, to)) {
+      const retries = loop ? /\bcontinue\b/.test(st.stmt) : new RegExp(`\\b${fn.name}\\s*\\(`).test(st.stmt);
+      if (!retries) continue;
+      if (/\b4\d\d\b|>=\s*400\b|>\s*399\b/.test(st.cond)) add(file.path, file.lineOf(st.at), "повтор для 4xx — 4xx не повторюємо ніколи");
+      else if (/!\s*[\w$.]*\.ok\b|\.status\s*!==?\s*20\d\b/.test(st.cond) && !/500|524|5\d\d/.test(st.cond)) add(file.path, file.lineOf(st.at), "повтор для будь-якого не-2xx — повторюються й 4xx");
+    }
+    if (!/setTimeout|\bsleep\s*\(|\bdelay\s*\(|\bwait\s*\(|\bpause\s*\(/.test(body)) atCall(add, file, call, "повтори без паузи (контракт: 1 с, потім 3 с)");
+    if (loop) {
+      const attempts = attemptsOf(file, loop);
+      if (attempts === null) add(file.path, file.lineOf(loop.start), "кількість спроб не розпізнано (очікується лічильник чи масив пауз з числом або const)");
+      else if (attempts > 3) add(file.path, file.lineOf(loop.start), `спроб більше трьох (${attempts})`);
+    } else {
+      const bound = body.match(/\b\w*(?:attempt|retr|tries)\w*\s*(<=|<)\s*([\w$.]+)/i);
+      const n = bound ? evalNum(file, bound[2]) : null;
+      if (n === null || n > 3) atCall(add, file, call, "рекурсивні повтори без межі ≤ 3");
     }
   }
   for (const f of clientFiles) for (const m of f.code.matchAll(/Workflow (was|got) started/g)) add(f.path, f.lineOf(m.index), "розбір тексту відповіді n8n замість коду статусу");
 });
 
 // C8
-const FORBIDDEN_DATA = /\b(ipAddress|userAgent|rawPayload|internalNotes|acceptLanguage)\b/;
+const FORBIDDEN_DATA = /\b(ip|ipAddress|clientIp|userAgent|ua|headers|rawPayload|rawBody|internalNotes|acceptLanguage|cookies?|password|secret|token)\b/;
+const WHOLE_OBJECT = /^(formData|lead|row|record|input|values|fields|payload|body|req|request|submission|entry|user|customer)$/;
+function wholeDataReason(file, text, beforeIdx) {
+  const t = text.trim();
+  if (/Object\.fromEntries\s*\(/.test(t)) return "у data для n8n — усі поля форми (Object.fromEntries)";
+  if (FORBIDDEN_DATA.test(t.replace(/(["'])(?:\\.|(?!\1).)*\1/g, ""))) return "у data для n8n — IP/user agent/заголовки/сирі дані/секрети";
+  if (/^\{[\s\S]*\.\.\.\s*[A-Za-z_$]/.test(t)) return "у data для n8n розгортається цілий об'єкт (...spread)";
+  if (WHOLE_OBJECT.test(t)) return `у n8n іде цілий об'єкт ${t}, а не мінімальні data`;
+  if (/^[A-Za-z_$][\w$]*$/.test(t)) {
+    const def = definitionOf(file, t, beforeIdx);
+    if (def && !def.text.startsWith("{")) {
+      if (/Object\.fromEntries\s*\(|^formData\b|^await\s+[\w$.]*(insert|create|get|find|load)/i.test(def.text)) return `у n8n іде цілий об'єкт ${t} (${/fromEntries/.test(def.text) ? "усі поля форми" : "запис з бази"})`;
+    } else if (def) {
+      return wholeDataReason(file, def.text, def.declIdx);
+    }
+  }
+  return null;
+}
+
 check("C8", "Тіло — конверт { version, event, data } з мінімальними data", (add) => {
   if (!fetchSites.length) return "викликів n8n у коді не знайдено";
   for (const { file, call } of fetchSites) {
-    const opts = call.args[1] ? file.code.slice(...call.args[1]) : "";
-    const bodyProp = opts.match(/\bbody\s*:\s*([^,}\n]+)|\bbody\b(?=\s*[,}])/);
-    const envelopeInFile = /\bversion\s*:\s*[\w$]+/.test(file.code) && /\bevent\b/.test(file.code) && /\bdata\b/.test(file.code);
-    const stringify = callsOf(file, "JSON\\.stringify").filter((s) => s.args.length);
-    const envelope = stringify.some((s) => /\bversion\b/.test(file.code.slice(...s.args[0])));
-    const optsStart = call.args[1] ? call.args[1][0] : call.start;
-    if (!envelope && !envelopeInFile) add(file.path, file.lineOf(optsStart + (bodyProp?.index ?? 0)), "тіло не має конверта { version, event, data }", "line", callEnd(file, call));
-    for (const s of stringify) {
-      const text = file.code.slice(...s.args[0]).trim();
-      if (FORBIDDEN_DATA.test(text)) add(file.path, file.lineOf(s.start), "у тілі для n8n — IP/user agent/сирі дані/нотатки");
-      else if (/^[A-Za-z_$][\w$]*$/.test(text) && !envelope && !/^(envelope|payload|message)$/.test(text)) add(file.path, file.lineOf(s.start), `у n8n іде цілий об'єкт ${text}, а не мінімальні data`);
+    const opts = fetchOptions(file, call);
+    let expr = propValue(opts.text, "body");
+    if (expr && /^[A-Za-z_$][\w$]*$/.test(expr)) expr = definitionOf(file, expr, call.start)?.text ?? null;
+    const str = expr?.match(/^JSON\.stringify\s*\(([\s\S]*)\)\s*$/);
+    let obj = str ? str[1].trim() : null;
+    let objName = null;
+    if (obj && /^[A-Za-z_$][\w$]*$/.test(obj)) { objName = obj; obj = definitionOf(file, obj, call.start)?.text ?? null; }
+    if (!obj || !obj.startsWith("{")) {
+      atCall(add, file, call, objName ? `у n8n іде цілий об'єкт ${objName}, а не конверт { version, event, data }` : "тіло не розпізнано як JSON.stringify({ version, event, data })");
+      continue;
+    }
+    if (!/\bversion\b/.test(obj) || !/\bevent\b/.test(obj) || !/\bdata\b/.test(obj)) atCall(add, file, call, "тіло не має конверта { version, event, data }");
+    else {
+      const dataVal = propValue(obj, "data");
+      const reason = dataVal && dataVal !== "data" ? wholeDataReason(file, dataVal, call.start) : null;
+      if (reason) atCall(add, file, call, reason);
+      else if (FORBIDDEN_DATA.test(obj.replace(/(["'])(?:\\.|(?!\1).)*\1/g, ""))) atCall(add, file, call, "у тілі для n8n — IP/user agent/заголовки/сирі дані/секрети");
+      else if (/\.\.\.\s*(?!\()[A-Za-z_$]/.test(obj)) atCall(add, file, call, "у тіло для n8n розгортається цілий об'єкт (...spread)");
     }
   }
-  for (const f of files) for (const site of triggerSites(f).filter((s) => s.kind === "import")) {
+  for (const f of files) for (const site of triggerSites(f).filter((s) => s.kind === "client")) {
     for (const [a, b] of site.call.args) {
-      const text = f.code.slice(a, b);
-      if (FORBIDDEN_DATA.test(text)) add(f.path, f.lineOf(a), "у data для n8n — IP/user agent/сирі дані/нотатки");
-      else if (/^\s*\{[^}]*\.\.\.\s*[A-Za-z_$]/.test(text)) add(f.path, f.lineOf(a), "у data для n8n розгортається цілий запис (...spread)");
+      const reason = wholeDataReason(f, f.code.slice(a, b), site.call.start);
+      if (reason) atCall(add, f, site.call, reason);
     }
   }
 });
 
 // C9
+function actionSpans(f) {
+  if (firstStatement(f) === "use client") return [];
+  if (firstStatement(f) === "use server") return [[0, f.code.length]];
+  const spans = [];
+  for (const m of f.blank.matchAll(/\{\s*(["'])\s*\1/g)) {
+    const inner = f.code.slice(m.index, m.index + m[0].length + 14);
+    if (!/^\{\s*(["'])use server\1/.test(inner)) continue;
+    const end = closeOf(f.blank, m.index);
+    if (end !== -1) spans.push([m.index, end]);
+  }
+  return spans;
+}
+
 check("C9", "Server Action не чекає n8n: виклик лише в after()", (add) => {
-  const actions = files.filter((f) => firstStatement(f) === "use server");
   let any = false;
-  for (const f of actions) {
-    const afterSpans = callsOf(f, "after|unstable_after").map((c) => [c.open, c.close]);
+  for (const f of files) {
+    const spans = actionSpans(f);
+    if (!spans.length) continue;
+    const afterSpans = [];
+    for (const c of callsOf(f, "after|unstable_after")) {
+      afterSpans.push([c.open, c.close]);
+      const arg = c.args[0] ? f.code.slice(...c.args[0]).trim() : "";
+      if (/^[A-Za-z_$][\w$]*$/.test(arg)) { const body = functionBody(f, arg); if (body) afterSpans.push([body.start, body.end]); }
+    }
     for (const site of triggerSites(f)) {
+      if (!spans.some(([a, b]) => site.call.start >= a && site.call.start <= b)) continue;
       any = true;
       const inside = afterSpans.some(([a, b]) => site.call.start > a && site.call.start < b);
-      if (!inside) add(f.path, f.lineOf(site.call.start), 'Server Action чекає n8n — перенести виклик у after() з "next/server"');
+      if (!inside) atCall(add, f, site.call, 'Server Action чекає n8n — перенести виклик у after() з "next/server"');
     }
   }
   if (!any) return "Server Actions не викликають n8n";
@@ -530,65 +810,67 @@ check("C10", 'Без export const runtime = "edge"', (add) => {
   }
 });
 
+// names of functions (in the route and its helpers) that call timingSafeEqual
+function verifierNames(group) {
+  const names = new Set();
+  for (const g of group) for (const m of g.code.matchAll(/timingSafeEqual\s*\(/g)) {
+    const fn = enclosingFunctionStart(g, m.index);
+    if (fn?.name && fn.name !== "POST") names.add(fn.name);
+  }
+  return names;
+}
+
+// first point in the route where the signature is actually compared: timingSafeEqual inside POST,
+// or the first call of a function that contains it, or of verify*()
+function verificationPoint(route) {
+  const idx = [];
+  const names = [...verifierNames(withHelpers(route))];
+  for (const call of callsOf(route, ["verify\\w*", ...names].join("|"))) {
+    const fn = enclosingFunctionStart(route, call.start);
+    if (!fn || fn.name === "POST" || !names.includes(fn.name)) idx.push(call.start);
+  }
+  for (const m of route.code.matchAll(/timingSafeEqual\s*\(/g)) {
+    const fn = enclosingFunctionStart(route, m.index);
+    if (!fn || fn.name === "POST" || !fn.name) idx.push(m.index);
+  }
+  return idx.length ? Math.min(...idx) : -1;
+}
+
+// first index in the route where JSON is parsed: JSON.parse / .json() in POST, or the first call of a
+// local function that parses
+function parsePoints(route) {
+  const points = [];
+  const parsers = new Set();
+  for (const m of route.code.matchAll(/JSON\.parse\s*\(/g)) {
+    const fn = enclosingFunctionStart(route, m.index);
+    if (fn?.name && fn.name !== "POST") parsers.add(fn.name);
+    else points.push({ idx: m.index, via: "JSON.parse" });
+  }
+  if (parsers.size) for (const c of callsOf(route, [...parsers].join("|"))) {
+    const fn = enclosingFunctionStart(route, c.start);
+    if (!fn || !parsers.has(fn.name)) points.push({ idx: c.start, via: "JSON.parse" });
+  }
+  return points;
+}
+
 // C11
 check("C11", "Колбек читає сире тіло й не парсить JSON до перевірки підпису", (add) => {
-  if (!callbackRoutes.length) return "колбек-роутів (POST route з n8n/callback/webhook) не знайдено";
+  if (!callbackRoutes.length) return "колбек-роутів не знайдено (евристика — див. --help)";
   for (const f of callbackRoutes) {
     for (const m of f.code.matchAll(/\.(json|formData)\s*\(\s*\)/g)) {
       const pre = f.code.slice(Math.max(0, m.index - 30), m.index);
       if (/\b(req|request|\w*[Rr]eq\w*)\s*$/.test(pre) || /await\s+\w+\s*$/.test(pre)) add(f.path, f.lineOf(m.index), `тіло читається через .${m[1]}() — підпис рахується від сирого тексту`);
     }
-    if (!/\.(text|arrayBuffer)\s*\(\s*\)/.test(f.code)) add(f.path, 1, "тіло не читається як сирий текст (.text())");
+    if (!/\.(text|arrayBuffer)\s*\(\s*\)/.test(f.code)) add(f.path, 1, "тіло не читається як сирий текст (.text())", "file");
     const verifyIdx = verificationPoint(f);
-    for (const m of f.code.matchAll(/JSON\.parse\s*\(/g)) {
-      if (verifyIdx === -1 || m.index < verifyIdx) {
-        // parse inside a helper defined in this file but called after verification is fine
-        if (verifyIdx !== -1 && calledAfter(f, m.index, verifyIdx)) continue;
-        add(f.path, f.lineOf(m.index), "JSON.parse до перевірки підпису");
-      }
+    for (const p of parsePoints(f)) {
+      if (verifyIdx === -1 || p.idx < verifyIdx) add(f.path, f.lineOf(p.idx), "JSON.parse до перевірки підпису (timingSafeEqual)");
     }
   }
 });
 
-function verificationPoint(f) {
-  const idx = [];
-  const direct = f.code.search(/timingSafeEqual\s*\(/);
-  // position of the first CALL of a verifier function (by name), not its definition
-  for (const m of f.blank.matchAll(/(?<![\w$.])(verify\w*|\w*[Ss]ignature\w*|\w*[Hh]mac\w*)\s*\(/g)) {
-    const before = f.code.slice(Math.max(0, m.index - 10), m.index);
-    if (/function\s+$/.test(before)) continue;
-    idx.push(m.index);
-  }
-  if (direct !== -1) {
-    const fnStart = enclosingFunctionStart(f, direct);
-    const name = fnStart?.name;
-    if (!name || name === "POST") idx.push(direct);
-  }
-  return idx.length ? Math.min(...idx) : -1;
-}
-
-function enclosingFunctionStart(f, idx) {
-  let best = null;
-  for (const m of f.blank.matchAll(/function\s+([\w$]+)\s*\(/g)) {
-    const open = m.index + m[0].length - 1;
-    const headClose = closeOf(f.blank, open);
-    const brace = f.blank.indexOf("{", headClose);
-    const end = closeOf(f.blank, brace);
-    if (brace < idx && idx < end && (!best || brace > best.brace)) best = { name: m[1], brace, end };
-  }
-  return best;
-}
-
-// JSON.parse sits inside a helper whose first call in POST happens after verification
-function calledAfter(f, parseIdx, verifyIdx) {
-  const fn = enclosingFunctionStart(f, parseIdx);
-  if (!fn || fn.name === "POST") return false;
-  const calls = [...f.blank.matchAll(new RegExp(`(?<![\\w$.])${fn.name}\\s*\\(`, "g"))]
-    .map((m) => m.index).filter((i) => !/function\s+$/.test(f.code.slice(Math.max(0, i - 10), i)));
-  return calls.length > 0 && calls.every((i) => i > verifyIdx);
-}
-
 // C12
+const NULLISH = /^(null|undefined|""|''|``|0|false|true)$/;
 check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual", (add) => {
   if (!callbackRoutes.length) return "колбек-роутів не знайдено";
   for (const route of callbackRoutes) {
@@ -596,7 +878,7 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
     const all = group.map((g) => g.code).join("\n");
     const at = (re) => { for (const g of group) { const i = g.code.search(re); if (i !== -1) return [g, i]; } return null; };
     const hmac = at(/createHmac\s*\(\s*["'`]sha256["'`]\s*,/);
-    if (!hmac) add(route.path, 1, "немає createHmac(\"sha256\", секрет)");
+    if (!hmac) add(route.path, 1, "немає createHmac(\"sha256\", секрет)", "file");
     else {
       const [g, i] = hmac;
       const argsText = g.code.slice(i, i + 200);
@@ -604,7 +886,7 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
       if (!/\$\{[^}]+\}\.\$\{[^}]+\}|\+\s*["'`]\.["'`]\s*\+/.test(all)) add(g.path, g.lineOf(i), "HMAC рахується не від `${timestamp}.${raw}`");
     }
     const tse = at(/timingSafeEqual\s*\(/);
-    if (!tse) add(route.path, 1, "немає crypto.timingSafeEqual");
+    if (!tse) add(route.path, 1, "немає crypto.timingSafeEqual", "file");
     else {
       const [g, i] = tse;
       const fn = enclosingFunctionStart(g, i);
@@ -612,26 +894,56 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
       const sameChain = g.code.slice(Math.max(0, i - 160), i);
       if (!/\.(byte)?[Ll]ength\s*(!==|===|!=|==|<|>)|(!==|===|!=|==)\s*[\w$.]+\.(byte)?[Ll]ength/.test(scope + sameChain)) add(g.path, g.lineOf(i), "немає перевірки довжини перед timingSafeEqual");
     }
-    for (const g of group) for (const m of g.code.matchAll(/([\w$.\[\]"'`]+)\s*(===|!==|==|!=)\s*([\w$.\[\]"'`]+)/g)) {
-      const [, left, , right] = m;
-      const operand = (s) => /sig|signature|hmac|digest/i.test(s) && !/\.(byte)?length$/i.test(s) && !/^(null|undefined|""|''|``)$/.test(s);
-      if ((operand(left) || operand(right)) && !/typeof/.test(g.code.slice(Math.max(0, m.index - 8), m.index))) add(g.path, g.lineOf(m.index), `підпис порівнюється через ${m[2]}`);
+    const OPERAND = String.raw`[\w$.\[\]"'\x60-]+(?:\([^()]*\))?(?:\.[\w$]+(?:\([^()]*\))?)*`;
+    const cmp = new RegExp(`(${OPERAND})\\s*(===|!==|==|!=)\\s*(${OPERAND})`, "g");
+    for (const g of group) for (const m of g.code.matchAll(cmp)) {
+      const [, left, op, right] = m;
+      if (NULLISH.test(left) || NULLISH.test(right)) continue;
+      const operand = (s) => /sig|signature|hmac|digest/i.test(s) && !/\.(byte)?length$/i.test(s);
+      if ((operand(left) || operand(right)) && !/typeof\s*$/.test(g.code.slice(Math.max(0, m.index - 8), m.index))) add(g.path, g.lineOf(m.index), `підпис порівнюється через ${op}`);
     }
   }
 });
 
 // C13
-check("C13", "Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді", (add) => {
+check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді", (add) => {
   if (!callbackRoutes.length) return "колбек-роутів не знайдено";
   for (const route of callbackRoutes) {
-    const all = withHelpers(route).map((g) => g.code).join("\n");
+    const group = withHelpers(route);
+    const all = group.map((g) => g.code).join("\n");
     const lower = all.toLowerCase();
-    if (!lower.includes("x-n8n-timestamp")) add(route.path, 1, "не читається x-n8n-timestamp");
-    if (!/\b300\b|\b300_?000\b|5\s*\*\s*60\b|WINDOW|TOLERANCE|MAX_AGE|SKEW/i.test(all) || !/Math\.abs|>\s*[\w$.]+[\s\S]{0,40}<\s*-|-\s*[\w$.]+\s*>/.test(all)) add(route.path, 1, "немає двостороннього вікна часу 300 с");
-    if (!lower.includes("idempotency-key")) add(route.path, 1, "не читається idempotency-key");
-    if (!/duplicate/.test(all)) add(route.path, 1, "повтор ключа не відповідає 200 { duplicate: true }");
-    if (!/jobId\s*\}\s*:\s*\$\{|jobId\s*\+\s*["'`]:["'`]/.test(all)) add(route.path, 1, "idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла");
-    if (!/status\s*:\s*202\b/.test(route.code)) add(route.path, 1, "успіх не відповідає 202");
+    for (const [code, what] of [[404, "невідома подія → 404"], [415, "не-JSON → 415"], [413, "тіло > 64 KB → 413"]]) {
+      if (!new RegExp(`status\\s*:\\s*${code}\\b`).test(route.code)) add(route.path, 1, `немає відповіді ${what}`, "file");
+    }
+    if (!lower.includes("x-n8n-timestamp")) add(route.path, 1, "не читається x-n8n-timestamp", "file");
+    const abs = /Math\.abs\s*\(/.exec(route.blank);
+    let windowS = null;
+    if (abs) {
+      const close = closeOf(route.blank, abs.index + abs[0].length - 1);
+      const cmp = route.code.slice(close + 1).match(/^\s*(>=|>)\s*([^|&)?;\n]+)/);
+      windowS = cmp ? evalNum(route, cmp[2]) : null;
+      if (windowS === null) add(route.path, route.lineOf(abs.index), "межу вікна часу не розпізнано (очікується число чи const ≤ 300 с)");
+      else if (!(windowS <= 300 || (windowS >= 1000 && windowS <= 300_000 && /Date\.now\(\)\s*-/.test(route.code.slice(abs.index, close))))) add(route.path, route.lineOf(abs.index), `вікно часу ${windowS} — понад 300 с`);
+    } else add(route.path, 1, "немає двостороннього вікна часу (Math.abs(зараз − timestamp) > 300)", "file");
+    const keyRead = route.code.match(/(?:const|let|var)\s+([\w$]+)\s*=\s*[\w$.]*headers\.get\(\s*["'`]idempotency-key["'`]\s*\)([^;\n]*)/i);
+    if (!lower.includes("idempotency-key")) add(route.path, 1, "не читається idempotency-key", "file");
+    else if (keyRead && /\?\?|\|\|/.test(keyRead[2])) add(route.path, route.lineOf(route.code.indexOf(keyRead[0])), "idempotency-key має братися лише із заголовка — фолбек із тіла дозволяє підмінити ключ");
+    if (!/duplicate/.test(all)) add(route.path, 1, "повтор ключа не відповідає 200 { duplicate: true }", "file");
+    const keyName = keyRead?.[1] ?? "key";
+    const tmpl = String.raw`\x60[^\x60]*jobId\s*\}\s*:\s*\$\{[^\x60]*\x60|[\w$.]*jobId\s*\+\s*["'\x60]:["'\x60]\s*\+\s*[\w$.]+`;
+    if (!new RegExp(`\\b${keyName}\\s*(!==|===|!=|==)\\s*(${tmpl})|(${tmpl})\\s*(!==|===|!=|==)\\s*${keyName}\\b`).test(route.code)) {
+      add(route.path, 1, "idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла", "file");
+    }
+    const claimRe = new RegExp(`(?<![\\w$])(?:[\\w$]+\\.)?(claim\\w*|reserve\\w*|acquire\\w*|lock\\w*|tryInsert\\w*|insert\\w*|add|setnx|set)\\s*\\(\\s*${keyName}\\b`, "gi");
+    const claims = [...route.blank.matchAll(claimRe)].map((m) => m.index);
+    if (!claims.length) add(route.path, 1, `немає claim ключа (${keyName}) у сховищі до обробки`, "file");
+    else {
+      const claimIdx = Math.min(...claims);
+      for (const p of parsePoints(route)) if (p.idx < claimIdx) add(route.path, route.lineOf(p.idx), "JSON.parse до claim idempotency-key — контракт: спершу claim, потім розбір тіла");
+      const releaseRe = new RegExp(`(?<![\\w$])(?:[\\w$]+\\.)?(release\\w*|unlock\\w*|delete|remove\\w*|del|forget\\w*|free\\w*)\\s*\\(\\s*${keyName}\\b`, "i");
+      if (!releaseRe.test(route.blank)) add(route.path, route.lineOf(claimIdx), "після claim немає звільнення ключа при 400 чи збої — n8n не зможе повторити");
+    }
+    if (!/status\s*:\s*202\b/.test(route.code)) add(route.path, 1, "успіх не відповідає 202", "file");
     const afterSpans = callsOf(route, "after|unstable_after").map((c) => [c.open, c.close]);
     if (afterSpans.length) {
       const writes = [...route.blank.matchAll(/(?<![\w$.])(?:[\w$]+\.)?(save|update|insert|set|persist|store|mark|complete|upsert)\w*\s*\(/gi)]
@@ -643,14 +955,16 @@ check("C13", "Колбек: вікно 300 с, ідемпотентність, �
 
 // C14
 const BAD_ARG = /^(body|raw|rawBody|payload|envelope|formData|data|req|request|headers|lead|row|record|input|values|fields)$/;
-const PII_PROP = /\.(email|phone|fullName|firstName|lastName|name|ipAddress|userAgent|message|text|notes?)\b/;
+const PII_PROP = /\.(email|phone|fullName|firstName|lastName|name|ipAddress|userAgent|notes?)\b/;
 const SECRET_WORD = /\b(token|secret|signature|sig|hmac|authorization|cookie|password)\b/i;
 check("C14", "Журнали без тіл, персональних даних і секретів", (add) => {
   for (const f of files) {
     for (const call of callsOf(f, "console\\.(?:log|info|warn|error|debug|trace)|logger\\.(?:log|info|warn|error|debug)")) {
       for (const [a, b] of call.args) {
-        const arg = f.blank.slice(a, b).trim(); // strings blanked, ${…} kept
+        let arg = f.blank.slice(a, b).trim(); // strings blanked, ${…} kept
         const line = f.lineOf(a);
+        const wrapped = arg.match(/^(?:JSON\.stringify|String|inspect|util\.inspect)\s*\(\s*([\s\S]*?)\s*(?:,[\s\S]*)?\)$/);
+        if (wrapped) arg = wrapped[1].trim();
         if (BAD_ARG.test(arg)) { add(f.path, line, `у журнал іде цілий об'єкт ${arg}`); continue; }
         if (/process\.env|N8N_/.test(arg)) { add(f.path, line, "у журнал ідуть змінні середовища"); continue; }
         const idents = arg.replace(/\b(Buffer\.byteLength|createHash|sha256|Object\.keys)\s*\([^)]*\)/g, "");
@@ -676,7 +990,7 @@ check("C15", "Колбек лежить у app/api/n8n/[event]/route.*, якщо
     const f = sendsCallback[0];
     add(f.path, f.lineOf(f.code.search(/\bcallbackUrl\b/)), "конверт шле callbackUrl, але app/api/n8n/[event]/route.* немає");
   }
-  for (const r of callbackRoutes) if (r !== contractRoute) add(r.path, 1, "колбек-роут не за шляхом app/api/n8n/[event]/route.*");
+  for (const r of callbackRoutes) if (r !== contractRoute) add(r.path, 1, "колбек-роут не за шляхом app/api/n8n/[event]/route.*", "file");
 });
 
 // ---------------------------------------------------------------- --changed-since
