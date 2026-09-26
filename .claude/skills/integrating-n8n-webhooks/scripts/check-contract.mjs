@@ -1102,7 +1102,6 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
   if (!callbackRoutes.length) return "колбек-роутів не знайдено";
   for (const route of callbackRoutes) {
     const group = withHelpers(route);
-    const all = group.map((g) => g.code).join("\n");
     const at = (re) => { for (const g of group) { const i = g.code.search(re); if (i !== -1) return [g, i]; } return null; };
     const hmac = at(/createHmac\s*\(\s*["'`]sha256["'`]\s*,/);
     if (!hmac) add(route.path, 1, "немає createHmac(\"sha256\", секрет)", "file");
