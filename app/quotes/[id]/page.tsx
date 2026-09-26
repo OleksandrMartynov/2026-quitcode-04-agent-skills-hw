@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { QuoteStatusRefresh } from "@/components/quote-status-refresh";
 import { db } from "@/lib/db";
 import { BUDGET_OPTIONS } from "@/lib/lead-form";
+import { isQuoteOverdue } from "@/lib/quote-deadline";
 import type { QuoteStatus } from "@/lib/types";
 
 const dateTimeFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium", timeStyle: "short" });
@@ -36,7 +37,9 @@ export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
   if (!quote) notFound();
 
   const status = STATUS_TEXT[quote.status];
-  const pending = quote.status === "queued" || quote.status === "processing";
+  const waiting = quote.status === "queued" || quote.status === "processing";
+  const overdue = waiting && isQuoteOverdue(quote.createdAt);
+  const pending = waiting && !overdue;
   const budget = BUDGET_OPTIONS.find((option) => option.value === String(quote.budget ?? ""))?.label;
 
   return (
@@ -54,7 +57,9 @@ export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
       </div>
 
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 text-sm">
-        <p className="text-slate-700">{status.hint}</p>
+        <p className="text-slate-700">
+          {overdue ? "Кошторис не надійшов за 5 хвилин. Спробуйте оновити сторінку пізніше або надішліть запит ще раз." : status.hint}
+        </p>
         {quote.status === "ready" && quote.documentUrl && (
           <a
             href={quote.documentUrl}
