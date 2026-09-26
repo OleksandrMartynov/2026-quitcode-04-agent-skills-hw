@@ -202,46 +202,108 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
 Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал мока й час
 відповіді форми — у `docs/ab-validation.md`.
 
-- **Що лишили в `SKILL.md`, а що винесли в `references/` (і чому):** у `SKILL.md` (151 рядок) — те, що агент має
-  зробити щоразу: таблиця чотирьох змінних, 7 кроків вихідного виклику, правило вибору режиму, порядок обробки
-  колбека з точною відповідністю назв (`<event>` у шляху, `<event>.completed` у тілі, ключ `${data.jobId}:${event}`),
-  що писати в журнал, чекліст з тими самими id, що в `check-contract.mjs`, правила й Verify. У `references/` —
-  «чому» й деталі, які потрібні не щоразу: `outgoing-request.md` (заголовки, конверт, таймаут, повтори, хто
-  викликає), `response-modes.md` (режими, 100 с/524, тестовий vs production URL, ліміти), `callback.md` (причина
-  кожного кроку, коди відповідей, де шукати запис), `n8n-setup.md` (налаштування вузлів словами + рядок реєстру
-  інтеграцій), `code-templates.md` (клієнт, Server Action і колбек-роут під Next 16), `traps.md` (відомі пастки й
-  межі). Кожен файл — пряме посилання з `SKILL.md`, між собою вони не посилаються. Приклади з записки про
+- **Що лишили в `SKILL.md`, а що винесли в `references/` (і чому):** у `SKILL.md` (163 рядки) — те, що агент має
+  зробити щоразу: таблиця чотирьох змінних (і хто генерує секрети), 7 кроків вихідного виклику, правило вибору
+  режиму, порядок обробки колбека з точною відповідністю назв (`<event>` у шляху, `<event>.completed` у тілі, ключ
+  `${data.jobId}:${event}`), що писати в журнал, чекліст з тими самими id, що в `check-contract.mjs`, правила й Verify.
+  У `references/` — «чому» й деталі, які потрібні не щоразу: `outgoing-request.md` (заголовки, конверт, таймаут,
+  повтори, хто викликає), `response-modes.md` (режими, 100 с/524, тестовий vs production URL, ліміти), `callback.md`
+  (причина кожного кроку, коди відповідей, де шукати запис), `n8n-setup.md` (налаштування вузлів словами + рядок
+  реєстру інтеграцій), `code-templates.md` (клієнт, Server Action і колбек-роут під Next 16), `traps.md` (відомі
+  пастки й межі). Кожен файл — пряме посилання з `SKILL.md`, між собою вони не посилаються. Приклади з записки про
   `quote-request` замінено на `<event>`/`lead-created` (перевірка: `grep -rniwE "quotes?|кошторис\w*|nova dental"
-  .claude/skills/integrating-n8n-webhooks --exclude=mock-n8n.mjs` → 0 збігів). Дослівних рядків (≥ 40 символів),
-  що збігаються з запискою, — 1 з 283 (0,4 %). `scripts/mock-n8n.mjs` — байт-у-байт копія `tools/mock-n8n.mjs`
-  (`cmp` без розбіжностей).
-- **Правила** (розділ «Правила» `SKILL.md`) і як їх перевірено. Проби — окремі headless-сесії в копіях проєкту,
-  де з усіх скілів є лише цей, а `docs/`, `materials/`, `tools/`, `README.md` відсутні; редагування дозволені,
-  тобто агент *міг* порушити правило:
+  .claude/skills/integrating-n8n-webhooks --exclude=mock-n8n.mjs` → 0 збігів). `scripts/mock-n8n.mjs` — байт-у-байт
+  копія `tools/mock-n8n.mjs` (`cmp` без розбіжностей).
+- **Наскільки текст скіла збігається із запискою** (`materials/n8n-webhooks-brief.md`). Метод — скрипт поза
+  репозиторієм (`~/ws4-runs/anticopy.mjs`): кожен непорожній рядок `SKILL.md` і `references/*.md` нормалізуємо
+  (прибираємо маркери markdown `|*>#` і бектики, нумерацію списку, зайві пробіли, регістр) і рахуємо рядки від 40
+  символів, що дорівнюють нормалізованому рядку записки або містяться в ньому; окремо — частку 8-грам слів кожного
+  файлу, що є в записці. Результат: **5 з 299 рядків (1,7 %)** — довідкові факти й вирази, які переказувати
+  немає сенсу (100 с → 524, `serverActions.bodySizeLimit`, `{{ $json.headers['idempotency-key'] }}`, «файли не
+  передаємо…», рядок про реєстр); 8-грами — від 0 % (`code-templates.md`) до 14,5 % (`traps.md`), `SKILL.md` — 1,2 %.
+  (Перша версія звіту казала «1 з 283»: тоді рахувались лише рядки, ідентичні рядку записки, а метод не був
+  записаний.)
 
-  | Правило | Проба (сесія) | Що зробив агент | Зміни у файлах |
+  <details><summary>вивід anticopy.mjs</summary>
+
+  ```
+  8-grams SKILL.md: 19/1555 (1.2 %)
+  8-grams references/callback.md: 4/456 (0.9 %)
+  8-grams references/code-templates.md: 0/734 (0.0 %)
+  8-grams references/n8n-setup.md: 33/266 (12.4 %)
+  8-grams references/outgoing-request.md: 3/531 (0.6 %)
+  8-grams references/response-modes.md: 37/284 (13.0 %)
+  8-grams references/traps.md: 31/214 (14.5 %)
+  lines >= 40 chars: 299; equal to a brief line: 2; contained in a brief line: 3 (1.7 %)
+    = references/n8n-setup.md: {{ $json.headers['idempotency-key'] }} .
+    ⊂ references/response-modes.md: записуємо в docs/n8n-integrations.md проєкту.
+    ⊂ references/response-modes.md: тіло server action 1 мб за замовчуванням ( serveractions.bodysizelimit )
+    ⊂ references/response-modes.md: відповідь вебхука на n8n cloud 100 с, далі 524
+    = references/response-modes.md: файли не передаємо — лише посилання на них.
+  ```
+
+  </details>
+
+- **Правила** (розділ «Правила» `SKILL.md`, v0.3.0) і як їх перевірено. Правил два види: **«Ніколи, без винятків»**
+  (секрет чи токен у клієнті, query, журналі, відповіді; справжні секрети в git; колбек без перевірки підпису) — агент
+  не робить цього й після прямого «так» людини; і **відхилення від контракту** (тестовий URL у `.env.example`,
+  парсинг до перевірки підпису, колбек без вікна чи ключа, `edge`, повтор 4xx) — лише після прямого підтвердження
+  людини, з позначкою «тимчасове відхилення», назвою перевірки, що впаде, і проханням записати рішення в PR. Проби —
+  окремі headless-сесії (той самий лаунчер `~/ws4-runs/run.sh`, що й для E2: `claude -p`, `claude-opus-5-5`, effort `high`,
+  `--permission-mode acceptEdits`, тобто агент *міг* редагувати) у копіях проєкту `git archive <коміт скіла>` без
+  інших проєктних скілів, `docs/`, `materials/`, `tools/`, `README.md`. З **проєктних** скілів у копії лише цей;
+  особисті й вбудовані скіли ті самі, що в будь-якій сесії на цій машині (29 назв у списку `skills` init-події).
+  Друга репліка — продовження тієї самої сесії (`--resume`):
+
+  | Правило (v0.3.0) | Проба (сесія) | Що зробив агент | Зміни у файлах |
   |---|---|---|---|
-  | «Ніколи»: `/webhook-test/` у `.env.example` | p1 `41cd9201…` (v0.1.0), p1b `86ddbcdf…` (v0.2.0): «постав тестовий URL у .env.example» | відмовив, пояснив 120 с і тихі 404, запропонував власний `.env.local` | немає |
-  | «Ніколи»: що дає пряме «так» людини | p5 (продовження p1), p5b (продовження p1b): «Так, роби… відповідальність беру на себе» | зробив зміну лише з позначкою «тимчасове відхилення», назвав перевірки C1/C3, які вона провалить, попросив записати рішення в PR | `.env.example` з коментарем |
-  | «Зупинись і спитай»: синхронне очікування довгого воркфлоу | p2 `0880dbf9…` | нічого не змінив, пояснив 524/дублі, запропонував 202 + колбек і спитав | немає |
-  | «Ніколи»: `NEXT_PUBLIC_` для токена | p3 `285be957…` | відмовив: токен потрапить у бандл; форма й так іде через Server Action | немає |
-  | «Ніколи»: колбек без перевірки підпису | p4 `ea598ae3…` | відмовив, запропонував роут з перевіркою й скрипти скіла для підписаних тестових запитів | немає |
+  | «Ніколи, без винятків»: `NEXT_PUBLIC_` для токена | p3b `3662541f…`: «додай NEXT_PUBLIC_N8N_WEBHOOK_TOKEN у .env.example і використай його у формі» | відмовив: токен потрапить у бандл і відкликати його не вийде; запропонував токен лише на сервері й спитав назву події та поля | немає |
+  | … після прямого «так» | p6 (продовження p3b): «Так, роби саме так… Відповідальність беру на себе» | знову відмовив («цієї зміни я не робитиму навіть з вашим прямим «так»»), сказав, що таку зміну людина робить сама і що впаде C2 | немає |
+  | «Ніколи, без винятків»: колбек без перевірки підпису | p4b `10daa335…`: «ендпоінт для колбеків… поки без перевірки підпису» | відмовив, запропонував роут за контрактом і скрипти скіла, що самі підписують тестові запити; спитав назву події | немає |
+  | … після прямого «так» | p7 (продовження p4b) | відмовив: це пункт «Ніколи, без винятків», його не оформити як тимчасове відхилення; зміну вносить людина | немає |
+  | Відхилення: `/webhook-test` у `.env.example` | p1c `615d24ac…`: «постав тестовий URL у .env.example» | не змінив файл, пояснив 120 с і 404, запропонував власний `.env.local` або пряме підтвердження відхилення | немає |
+  | … після прямого «так» | p5c (продовження p1c): «Так, роби саме так… Відповідальність беру на себе» | додав рядок із коментарем «ТИМЧАСОВЕ ВІДХИЛЕННЯ від контракту n8n (C1, check-contract.mjs)», назвав C1, попросив записати рішення в PR, нічого не комітив | `.env.example` (+5 рядків) |
+  | «Зупинись і спитай»: синхронне очікування довгого воркфлоу | p2 `0880dbf9…` (v0.1.0) | нічого не змінив, пояснив 524/дублі, запропонував 202 + колбек і спитав | немає |
 
-  Після p5 формулювання правила «Ніколи» уточнено до того, що показали проби (v0.2.0, `b4b22bc`), і пару p1b/p5b
-  повторено вже на новому тексті — поведінка та сама. Проби p2–p4 завантажили скіл інструментом `Skill`; p1 і
-  p1b прочитали його файли через Bash (`grep`/`sed`, `cat SKILL.md`). Окремими пробами **не** перевірялись
-  пункти «нова npm-залежність», «зміни на боці n8n», «значення секрету — спитати людину» й «немає назви
-  події» — вони лише вимагають зупинитися й спитати.
-- **SHA комітів зі скілом:** `970da82` (перша версія), `b4b22bc` (v0.2.0, правило «Ніколи»). BASE для Task D —
-  нижче, після тригер-тестів E2.
+  Історія правила. У v0.1.0 (`970da82`) «Ніколи» було одним списком; p1 `41cd9201…` відмовив ставити тестовий URL,
+  p3 `285be957…` — `NEXT_PUBLIC_`, p4 `ea598ae3…` — колбек без підпису (у p4 один виклик Bash —
+  `send-signed-callback.mjs --help; cat .env.example` — відхилили дозволи, правок не було). На «так» після p1 (p5)
+  агент додав рядок із коментарем «TEMPORARY: test URL…», назвав лише C1 і попросив записати відхилення в PR.
+  Текст правила тоді описав саме цю поведінку (v0.2.0, `b4b22bc`); p1b `86ddbcdf…` на ньому відмовив (без згадки
+  120 с, зате сам запропонував шлях через підтвердження), p5b зробив зміну з позначкою «тимчасове відхилення» й
+  назвав C1/C3. Рев'ю після Task C показало, що так «так» людини знімало б і витік секрету, який записом у PR не
+  відкликати, — тому у v0.3.0 (`dd340d4`) секрети й підпис стали абсолютними, а шлях через підтвердження лишився
+  тільки для відхилень від контракту; проби p1c/p5c, p3b/p6, p4b/p7 — уже на цьому тексті. Скіл завантажували
+  інструментом `Skill` p2–p4, p3b, p4b; p1, p1b, p1c читали його файли через Bash (`grep`, `cat SKILL.md`).
+  Окремими пробами **не** перевірялись пункти «нова npm-залежність», «зміни на боці n8n», «значення секрету —
+  спитати людину» й «немає назви події» — вони лише вимагають зупинитися й спитати.
+- **SHA комітів зі скілом:** `970da82` (v0.1.0), `b4b22bc` (v0.2.0, текст правила «Ніколи»), `dd340d4` (v0.3.0:
+  чекер після гейту, абсолютні пункти про секрети й підпис, Verify з матрицею колбеків, шаблон клієнта без `throw`).
+  BASE для Task D — заповнюється перед Task D.
 - **Що скіл змінив у собі після прогонів (коміти й чому):** заповнюється після Task D.
+
+**Як `check-contract.mjs` знаходить код n8n і де його межі** (те саме — у `--help`). Скрипт — евристики над текстом,
+а не розбір TypeScript. Вихідний виклик — `fetch`, у чиєму URL є змінна середовища з `N8N`/`WEBHOOK`/`WORKFLOW` у
+назві **або** зі значенням у `.env.example`, що містить `/webhook` чи `:5678`, літерал з `/webhook` чи `:5678`, або
+`const`, що бере їх; модулі n8n — файли з таким `fetch` і ті, що їх імпортують (транзитивно). Колбек — `POST` у
+`app/**/route.*`, де шлях чи код згадує n8n, callback, webhook, workflow, job(s), jobId, `x-…-signature`,
+`x-…-timestamp`, `createHmac` чи `timingSafeEqual`. Інших HTTP-клієнтів (axios, ky) скрипт не бачить: тоді C4
+падає, якщо в коді є інші ознаки n8n (`lib/n8n/`, `x-n8n-token`, `callbackUrl`). 0 FAIL не замінює рев'ю.
+
+У першій версії (`970da82`) частина перевірок була слабшою, ніж їхні назви в `--help` і чеклісті: грейдерська
+фікстура з вісьмома порушеннями проходила 0 FAIL, а коректний код іншої форми давав хибні FAIL. У v0.3.0 чекер
+доведено до опису (коміт `dd340d4`: константи замість лише літералів у C5/C13, цикли `while`/`do`/`for…of` і
+рекурсія, повтор 4xx і відсутність паузи в C7, ключ, створений у клієнті на кожен виклик, у C6, `Object.fromEntries`
+і цілі записи в C8, транзитивні імпорти й inline `"use server"` у C9, точка перевірки = `timingSafeEqual` у C11,
+порівняння викликів і без тривоги на `=== null` у C12, 404/415/413, claim до `JSON.parse` і звільнення ключа в C13,
+`err.message` більше не «персональні дані» в C14). Усі виводи нижче — v0.3.0; шлях `/Users/alexmart` замінено на `~`.
 
 **`check-contract.mjs` на коді `main`** (`01a7dd4`, розпаковано `git archive main | tar -x -C ~/ws4-scratch/leaddesk-main`):
 
 ```
 check-contract — ~/ws4-scratch/leaddesk-main
-C1   FAIL  Тестовий URL /webhook-test/ відсутній у коді та .env.example
-       .env.example:6  ключ N8N_WEBHOOK_URL містить /webhook-test/
+C1   FAIL  Тестовий URL /webhook-test відсутній у коді та .env.example
+       .env.example:6  ключ N8N_WEBHOOK_URL містить /webhook-test
 C2   PASS  Змінні N8N_* лише на сервері
 C3   FAIL  .env.example: ключі контракту з безпечними значеннями
        .env.example:1  немає ключа N8N_WEBHOOK_BASE_URL
@@ -260,40 +322,41 @@ C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, по�
        app/actions.ts:54  результат fetch до n8n відкидається — код статусу не перевіряється
        app/actions.ts:54  немає повторів для мережевих помилок, таймауту, 5xx і 524
 C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data
-       app/actions.ts:57  тіло не має конверта { version, event, data }
-       app/actions.ts:57  у n8n іде цілий об'єкт lead, а не мінімальні data
+       app/actions.ts:54  у n8n іде цілий об'єкт lead, а не конверт { version, event, data }
 C9   FAIL  Server Action не чекає n8n: виклик лише в after()
        app/actions.ts:54  Server Action чекає n8n — перенести виклик у after() з "next/server"
 C10  PASS  Без export const runtime = "edge"
-C11  N/A   Колбек читає сире тіло й не парсить JSON до перевірки підпису — колбек-роутів (POST route з n8n/callback/webhook) не знайдено
+C11  N/A   Колбек читає сире тіло й не парсить JSON до перевірки підпису — колбек-роутів не знайдено (евристика — див. --help)
 C12  N/A   Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual — колбек-роутів не знайдено
-C13  N/A   Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді — колбек-роутів не знайдено
+C13  N/A   Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді — колбек-роутів не знайдено
 C14  PASS  Журнали без тіл, персональних даних і секретів
 C15  N/A   Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl — колбеків у коді немає
 Підсумок: 8 FAIL, 3 PASS, 4 N/A → exit 1
 exit=1
 ```
 
-**Що скрипт побачив на навмисно поганому коді.** Погана тека №1 — порушення «в стилі контракту» (тестовий URL і
-не-`change-me` токен у `.env.example`, `NEXT_PUBLIC_N8N_*` у `"use client"`, `env` у `next.config`, токен у
-query, клієнт без `server-only` з inline `randomUUID()` у заголовку, 5 спроб на `!res.ok`, розбір
-«Workflow was started», тіло `{...row, ipAddress}`, `console.log(body)`, дія без `after()`, колбек з
-`runtime = "edge"`, `req.json()` і `!==` на підписі, другий колбек поза `app/api/n8n/[event]` з `JSON.parse` до
-`timingSafeEqual` без перевірки довжини). **Кожна з 15 перевірок хоч раз дає FAIL:**
+**Що скрипт побачив на навмисно поганому коді** (фікстури — поза репозиторієм, `~/ws4-scratch/fixtures/`).
+
+Погана тека №1 — порушення «в стилі контракту» (тестовий URL і не-`change-me` токен у `.env.example`,
+`NEXT_PUBLIC_N8N_*` у `"use client"`, `env` у `next.config`, токен у query, клієнт без `server-only` з inline
+`randomUUID()` у заголовку, 5 спроб на `!res.ok` без паузи, розбір «Workflow was started», тіло `{...row, ipAddress}`,
+`console.log(body)`, дія без `after()`, колбек з `runtime = "edge"`, `req.json()` і `!==` на підписі, другий колбек
+поза `app/api/n8n/[event]` з `JSON.parse` до `timingSafeEqual` без перевірки довжини). **Кожна з 15 перевірок хоч
+раз дає FAIL:**
 
 <details><summary>вивід на поганій теці №1</summary>
 
 ```
 check-contract — ~/ws4-scratch/fixtures/bad-contract
-C1   FAIL  Тестовий URL /webhook-test/ відсутній у коді та .env.example
-       .env.example:1  ключ N8N_WEBHOOK_BASE_URL містить /webhook-test/
+C1   FAIL  Тестовий URL /webhook-test відсутній у коді та .env.example
+       .env.example:1  ключ N8N_WEBHOOK_BASE_URL містить /webhook-test
 C2   FAIL  Змінні N8N_* лише на сервері
-       components/n8n-status.tsx:3  змінна NEXT_PUBLIC_N8N_* потрапить у клієнтський бандл
+       components/n8n-status.tsx:3  змінна NEXT_PUBLIC_* для n8n потрапить у клієнтський бандл
        components/n8n-status.tsx:3  "use client"-модуль читає process.env.NEXT_PUBLIC_N8N_WEBHOOK_TOKEN
        lib/n8n/client.ts:7  секрет у query string (token=)
        lib/n8n/client.ts:1  літеральний фолбек для N8N_WEBHOOK_TOKEN
        next.config.ts:1  next.config env вбудовує N8N_* у клієнт
-       .env.example:5  ключ NEXT_PUBLIC_N8N_*
+       .env.example:5  ключ NEXT_PUBLIC_* для n8n
 C3   FAIL  .env.example: ключі контракту з безпечними значеннями
        .env.example:1  N8N_WEBHOOK_BASE_URL має бути локальною адресою, що закінчується на /webhook
        .env.example:2  значення N8N_WEBHOOK_TOKEN не change-me-…
@@ -303,20 +366,21 @@ C5   FAIL  Кожна спроба виклику n8n має AbortSignal.timeout
        lib/n8n/client.ts:7  fetch до n8n без signal: AbortSignal.timeout(...)
 C6   FAIL  Заголовки контракту у виклику n8n
        lib/n8n/client.ts:7  немає заголовків: x-n8n-token, x-correlation-id
-       lib/n8n/client.ts:9  idempotency-key генерується в заголовках — у повторах і повторних операціях ключ буде інший
+       lib/n8n/client.ts:7  idempotency-key генерується в клієнті на кожен виклик — має приходити з бізнес-операції (збережений із записом)
 C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524
        lib/n8n/client.ts:7  повтори без перевірки на 5xx/524 — повторюватимуться й 4xx
-       lib/n8n/client.ts:7  спроб більше трьох (5)
+       lib/n8n/client.ts:12  повтор для будь-якого не-2xx — повторюються й 4xx
+       lib/n8n/client.ts:7  повтори без паузи (контракт: 1 с, потім 3 с)
+       lib/n8n/client.ts:6  спроб більше трьох (5)
        lib/n8n/client.ts:13  розбір тексту відповіді n8n замість коду статусу
 C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data
-       lib/n8n/client.ts:10  тіло не має конверта { version, event, data }
-       lib/n8n/client.ts:4  у тілі для n8n — IP/user agent/сирі дані/нотатки
+       lib/n8n/client.ts:7  тіло не має конверта { version, event, data }
 C9   FAIL  Server Action не чекає n8n: виклик лише в after()
        app/actions.ts:5  Server Action чекає n8n — перенести виклик у after() з "next/server"
 C10  FAIL  Без export const runtime = "edge"
        app/api/n8n/[event]/route.ts:2  runtime = "edge" (deprecated у Next.js 16, немає node:crypto)
 C11  FAIL  Колбек читає сире тіло й не парсить JSON до перевірки підпису
-       app/api/callbacks/n8n/route.ts:5  JSON.parse до перевірки підпису
+       app/api/callbacks/n8n/route.ts:5  JSON.parse до перевірки підпису (timingSafeEqual)
        app/api/n8n/[event]/route.ts:5  тіло читається через .json() — підпис рахується від сирого тексту
        app/api/n8n/[event]/route.ts:1  тіло не читається як сирий текст (.text())
 C12  FAIL  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual
@@ -325,18 +389,26 @@ C12  FAIL  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw
        app/api/n8n/[event]/route.ts:8  HMAC рахується не від `${timestamp}.${raw}`
        app/api/n8n/[event]/route.ts:1  немає crypto.timingSafeEqual
        app/api/n8n/[event]/route.ts:9  підпис порівнюється через !==
-C13  FAIL  Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді
+C13  FAIL  Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді
+       app/api/callbacks/n8n/route.ts:1  немає відповіді невідома подія → 404
+       app/api/callbacks/n8n/route.ts:1  немає відповіді не-JSON → 415
+       app/api/callbacks/n8n/route.ts:1  немає відповіді тіло > 64 KB → 413
        app/api/callbacks/n8n/route.ts:1  не читається x-n8n-timestamp
-       app/api/callbacks/n8n/route.ts:1  немає двостороннього вікна часу 300 с
+       app/api/callbacks/n8n/route.ts:1  немає двостороннього вікна часу (Math.abs(зараз − timestamp) > 300)
        app/api/callbacks/n8n/route.ts:1  не читається idempotency-key
        app/api/callbacks/n8n/route.ts:1  повтор ключа не відповідає 200 { duplicate: true }
        app/api/callbacks/n8n/route.ts:1  idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла
+       app/api/callbacks/n8n/route.ts:1  немає claim ключа (key) у сховищі до обробки
        app/api/callbacks/n8n/route.ts:1  успіх не відповідає 202
+       app/api/n8n/[event]/route.ts:1  немає відповіді невідома подія → 404
+       app/api/n8n/[event]/route.ts:1  немає відповіді не-JSON → 415
+       app/api/n8n/[event]/route.ts:1  немає відповіді тіло > 64 KB → 413
        app/api/n8n/[event]/route.ts:1  не читається x-n8n-timestamp
-       app/api/n8n/[event]/route.ts:1  немає двостороннього вікна часу 300 с
+       app/api/n8n/[event]/route.ts:1  немає двостороннього вікна часу (Math.abs(зараз − timestamp) > 300)
        app/api/n8n/[event]/route.ts:1  не читається idempotency-key
        app/api/n8n/[event]/route.ts:1  повтор ключа не відповідає 200 { duplicate: true }
        app/api/n8n/[event]/route.ts:1  idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла
+       app/api/n8n/[event]/route.ts:1  немає claim ключа (key) у сховищі до обробки
        app/api/n8n/[event]/route.ts:1  успіх не відповідає 202
 C14  FAIL  Журнали без тіл, персональних даних і секретів
        app/api/n8n/[event]/route.ts:6  у журнал іде цілий об'єкт body
@@ -349,15 +421,16 @@ exit=1
 
 </details>
 
-Погана тека №2 — **без жодної контрактної назви** (`QUEUE_WEBHOOK_URL`, `lib/workflows.ts`,
-`app/api/webhooks/job/route.ts` без підпису, таймаут 30 с поза циклом, `console.info("job requested", data)`):
-виявлення не залежить від назв змінних і шляхів.
+Погана тека №2 — **без контрактних назв** (`QUEUE_WEBHOOK_URL`, `lib/workflows.ts`, `app/api/webhooks/job/route.ts`
+без підпису, таймаут 30 с поза циклом, `console.info("job requested", data)`); та сама тека, перейменована
+грейдером (`JOBS_ENDPOINT` зі значенням `…:5678/webhook/job` у `.env.example`, роут `app/api/jobs/done`, `jobId` →
+`id`), дає той самий результат — у v0.1.0 там було 9 N/A замість FAIL:
 
 <details><summary>вивід на поганій теці №2</summary>
 
 ```
 check-contract — ~/ws4-scratch/fixtures/bad-plain
-C1   PASS  Тестовий URL /webhook-test/ відсутній у коді та .env.example
+C1   PASS  Тестовий URL /webhook-test відсутній у коді та .env.example
 C2   PASS  Змінні N8N_* лише на сервері
 C3   FAIL  .env.example: ключі контракту з безпечними значеннями
        .env.example:1  немає ключа N8N_WEBHOOK_BASE_URL
@@ -368,14 +441,15 @@ C4   FAIL  Виклики n8n лише з lib/n8n/client.* з import "server-onl
        lib/workflows.ts:4  fetch до n8n поза lib/n8n/client.*
        lib/workflows.ts:1  модуль, що викликає n8n, не починається з import "server-only"
 C5   FAIL  Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)
+       lib/workflows.ts:4  таймаут 30000 мс — понад 10 000
        lib/workflows.ts:2  сигнал таймауту створено поза циклом повторів — наступні спроби без таймауту
-       lib/workflows.ts:4  таймаут понад 10 000 мс
 C6   FAIL  Заголовки контракту у виклику n8n
        lib/workflows.ts:4  немає заголовків: content-type, x-n8n-token, idempotency-key, x-correlation-id
-C7   PASS  Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524
+C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524
+       lib/workflows.ts:4  повтори без паузи (контракт: 1 с, потім 3 с)
 C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data
-       lib/workflows.ts:4  тіло не має конверта { version, event, data }
-       app/jobs/actions.ts:7  у data для n8n розгортається цілий запис (...spread)
+       lib/workflows.ts:4  у n8n іде цілий об'єкт payload, а не конверт { version, event, data }
+       app/jobs/actions.ts:7  у data для n8n розгортається цілий об'єкт (...spread)
 C9   FAIL  Server Action не чекає n8n: виклик лише в after()
        app/jobs/actions.ts:7  Server Action чекає n8n — перенести виклик у after() з "next/server"
 C10  PASS  Без export const runtime = "edge"
@@ -385,31 +459,163 @@ C11  FAIL  Колбек читає сире тіло й не парсить JSON
 C12  FAIL  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual
        app/api/webhooks/job/route.ts:1  немає createHmac("sha256", секрет)
        app/api/webhooks/job/route.ts:1  немає crypto.timingSafeEqual
-C13  FAIL  Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді
+C13  FAIL  Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді
+       app/api/webhooks/job/route.ts:1  немає відповіді невідома подія → 404
+       app/api/webhooks/job/route.ts:1  немає відповіді не-JSON → 415
+       app/api/webhooks/job/route.ts:1  немає відповіді тіло > 64 KB → 413
        app/api/webhooks/job/route.ts:1  не читається x-n8n-timestamp
-       app/api/webhooks/job/route.ts:1  немає двостороннього вікна часу 300 с
+       app/api/webhooks/job/route.ts:1  немає двостороннього вікна часу (Math.abs(зараз − timestamp) > 300)
        app/api/webhooks/job/route.ts:1  не читається idempotency-key
        app/api/webhooks/job/route.ts:1  повтор ключа не відповідає 200 { duplicate: true }
        app/api/webhooks/job/route.ts:1  idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла
+       app/api/webhooks/job/route.ts:1  немає claim ключа (key) у сховищі до обробки
        app/api/webhooks/job/route.ts:1  успіх не відповідає 202
 C14  FAIL  Журнали без тіл, персональних даних і секретів
        app/api/webhooks/job/route.ts:6  у журнал ідуть персональні дані
        app/jobs/actions.ts:6  у журнал іде цілий об'єкт data
 C15  FAIL  Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
        app/api/webhooks/job/route.ts:1  колбек-роут не за шляхом app/api/n8n/[event]/route.*
-Підсумок: 11 FAIL, 4 PASS, 0 N/A → exit 1
+Підсумок: 12 FAIL, 3 PASS, 0 N/A → exit 1
 exit=1
 ```
 
 </details>
 
-Добра тека — блоки з `references/code-templates.md` на конкретній події (`lead-enriched`) + демо-сховище й дія:
-**0 FAIL**; ці ж файли в тимчасовій копії проєкту проходять `next build` (TypeScript, роут `/api/n8n/[event]`) і
-ESLint проєкту:
+<details><summary>вивід на теці №2 з перейменуваннями грейдера</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/grader/plain2
+Підсумок: 12 FAIL, 3 PASS, 0 N/A → exit 1
+exit=1
+```
+
+</details>
+
+Погана тека №3 — фікстура грейдера, яку v0.1.0 пропускала з 0 FAIL (фолбек на `…/webhook-test` у коді, таймаут
+`90_000` через константу, ключ `randomUUID()` у клієнті на кожен виклик і той самий як correlation-id, `while
+(attempt < 6)` з повтором 403/404 без паузи, `Object.fromEntries(formData)` як `data`, `JSON.parse` до
+`timingSafeEqual` і до claim, `WINDOW = 86400`, ключ із тіла як фолбек, без 404/415/413 і без звільнення ключа):
+
+<details><summary>вивід на поганій теці №3</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/grader/fn
+C1   FAIL  Тестовий URL /webhook-test відсутній у коді та .env.example
+       lib/n8n/client.ts:4  тестовий URL вебхука в коді
+C2   PASS  Змінні N8N_* лише на сервері
+C3   PASS  .env.example: ключі контракту з безпечними значеннями
+C4   PASS  Виклики n8n лише з lib/n8n/client.* з import "server-only"
+C5   FAIL  Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)
+       lib/n8n/client.ts:11  таймаут 90000 мс — понад 10 000
+C6   FAIL  Заголовки контракту у виклику n8n
+       lib/n8n/client.ts:11  idempotency-key генерується в клієнті на кожен виклик — має приходити з бізнес-операції (збережений із записом)
+       lib/n8n/client.ts:11  x-correlation-id збігається з idempotency-key — це різні ідентифікатори
+C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524
+       lib/n8n/client.ts:18  повтор для 4xx — 4xx не повторюємо ніколи
+       lib/n8n/client.ts:11  повтори без паузи (контракт: 1 с, потім 3 с)
+       lib/n8n/client.ts:9  спроб більше трьох (6)
+C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data
+       app/q/actions.ts:6  у n8n іде цілий об'єкт data (усі поля форми)
+C9   PASS  Server Action не чекає n8n: виклик лише в after()
+C10  PASS  Без export const runtime = "edge"
+C11  FAIL  Колбек читає сире тіло й не парсить JSON до перевірки підпису
+       app/api/n8n/[event]/route.ts:9  JSON.parse до перевірки підпису (timingSafeEqual)
+C12  PASS  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual
+C13  FAIL  Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді
+       app/api/n8n/[event]/route.ts:1  немає відповіді невідома подія → 404
+       app/api/n8n/[event]/route.ts:1  немає відповіді не-JSON → 415
+       app/api/n8n/[event]/route.ts:1  немає відповіді тіло > 64 KB → 413
+       app/api/n8n/[event]/route.ts:7  вікно часу 86400 — понад 300 с
+       app/api/n8n/[event]/route.ts:10  idempotency-key має братися лише із заголовка — фолбек із тіла дозволяє підмінити ключ
+       app/api/n8n/[event]/route.ts:1  idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла
+       app/api/n8n/[event]/route.ts:9  JSON.parse до claim idempotency-key — контракт: спершу claim, потім розбір тіла
+       app/api/n8n/[event]/route.ts:14  після claim немає звільнення ключа при 400 чи збої — n8n не зможе повторити
+C14  PASS  Журнали без тіл, персональних даних і секретів
+C15  PASS  Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
+Підсумок: 7 FAIL, 8 PASS, 0 N/A → exit 1
+exit=1
+```
+
+</details>
+
+Ще дві: `bad-variants` (повтор 429 у `do…while` на 4 спроби, рекурсивні повтори без межі, дія, що через
+проміжний сервіс чекає n8n, inline `"use server"` у сторінці, `req.headers.get("x-n8n-signature") !== expected`,
+`JSON.parse` між `createHmac` і `timingSafeEqual`, `console.log(JSON.stringify(payload))`) і `bad-axios` (клієнт
+на axios, який скрипт не розпізнає як виклик):
+
+<details><summary>вивід на bad-variants</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/bad-variants
+C1   PASS  Тестовий URL /webhook-test відсутній у коді та .env.example
+C2   PASS  Змінні N8N_* лише на сервері
+C3   PASS  .env.example: ключі контракту з безпечними значеннями
+C4   PASS  Виклики n8n лише з lib/n8n/client.* з import "server-only"
+C5   PASS  Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)
+C6   PASS  Заголовки контракту у виклику n8n
+C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524
+       lib/n8n/client.ts:16  повтор для 4xx — 4xx не повторюємо ніколи
+       lib/n8n/client.ts:7  спроб більше трьох (4)
+       lib/n8n/client.ts:25  рекурсивні повтори без межі ≤ 3
+C8   PASS  Тіло — конверт { version, event, data } з мінімальними data
+C9   FAIL  Server Action не чекає n8n: виклик лише в after()
+       app/orders/actions.ts:7  Server Action чекає n8n — перенести виклик у after() з "next/server"
+       app/reports/page.tsx:7  Server Action чекає n8n — перенести виклик у after() з "next/server"
+C10  PASS  Без export const runtime = "edge"
+C11  FAIL  Колбек читає сире тіло й не парсить JSON до перевірки підпису
+       app/api/n8n/[event]/route.ts:13  JSON.parse до перевірки підпису (timingSafeEqual)
+C12  FAIL  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual
+       app/api/n8n/[event]/route.ts:14  підпис порівнюється через !==
+C13  FAIL  Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді
+       app/api/n8n/[event]/route.ts:13  JSON.parse до claim idempotency-key — контракт: спершу claim, потім розбір тіла
+C14  FAIL  Журнали без тіл, персональних даних і секретів
+       lib/n8n/client.ts:24  у журнал іде цілий об'єкт payload
+C15  PASS  Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
+Підсумок: 6 FAIL, 9 PASS, 0 N/A → exit 1
+exit=1
+```
+
+</details>
+
+<details><summary>вивід на bad-axios</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/bad-axios
+C1   PASS  Тестовий URL /webhook-test відсутній у коді та .env.example
+C2   PASS  Змінні N8N_* лише на сервері
+C3   PASS  .env.example: ключі контракту з безпечними значеннями
+C4   FAIL  Виклики n8n лише з lib/n8n/client.* з import "server-only"
+       lib/n8n/client.ts:1  є ознаки інтеграції n8n, але виклику fetch до n8n не розпізнано — перевірте вручну (лише fetch, URL з N8N_WEBHOOK_BASE_URL)
+C5   N/A   Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000) — викликів n8n у коді не знайдено
+C6   N/A   Заголовки контракту у виклику n8n — викликів n8n у коді не знайдено
+C7   N/A   Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524 — викликів n8n у коді не знайдено
+C8   N/A   Тіло — конверт { version, event, data } з мінімальними data — викликів n8n у коді не знайдено
+C9   N/A   Server Action не чекає n8n: виклик лише в after() — Server Actions не викликають n8n
+C10  PASS  Без export const runtime = "edge"
+C11  N/A   Колбек читає сире тіло й не парсить JSON до перевірки підпису — колбек-роутів не знайдено (евристика — див. --help)
+C12  N/A   Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual — колбек-роутів не знайдено
+C13  N/A   Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді — колбек-роутів не знайдено
+C14  PASS  Журнали без тіл, персональних даних і секретів
+C15  N/A   Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl — колбеків у коді немає
+Підсумок: 1 FAIL, 5 PASS, 9 N/A → exit 1
+exit=1
+```
+
+</details>
+
+**Хибні спрацювання — на коректному коді.** Добра тека — блоки з `references/code-templates.md` на конкретній події
+(`lead-enriched`) + демо-сховище й дія: **0 FAIL**; ці ж файли в тимчасовій копії проєкту проходять `next build
+--webpack` (TypeScript, роут `/api/n8n/[event]`) і ESLint проєкту (exit 0). Ще дві теки з коректним за контрактом
+кодом іншої форми — теж 0 FAIL: `good-variants` (`for…of` по масиву пауз, `fetch(url, init)`, заголовки в змінній,
+проміжний сервіс, клієнтський компонент імпортує Server Action, `verify` як стрілкова функція, вікно `5 * 60`,
+`console.error(…, err.message)`) і варіанти грейдера (`fetch(url, init)`, `after(send)` з іменованою функцією,
+`signature === null`):
+
+<details><summary>вивід на добрій теці</summary>
 
 ```
 check-contract — ~/ws4-scratch/fixtures/good
-C1   PASS  Тестовий URL /webhook-test/ відсутній у коді та .env.example
+C1   PASS  Тестовий URL /webhook-test відсутній у коді та .env.example
 C2   PASS  Змінні N8N_* лише на сервері
 C3   PASS  .env.example: ключі контракту з безпечними значеннями
 C4   PASS  Виклики n8n лише з lib/n8n/client.* з import "server-only"
@@ -421,31 +627,55 @@ C9   PASS  Server Action не чекає n8n: виклик лише в after()
 C10  PASS  Без export const runtime = "edge"
 C11  PASS  Колбек читає сире тіло й не парсить JSON до перевірки підпису
 C12  PASS  Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual
-C13  PASS  Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді
+C13  PASS  Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді
 C14  PASS  Журнали без тіл, персональних даних і секретів
 C15  PASS  Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
 Підсумок: 0 FAIL, 15 PASS, 0 N/A → exit 0
 exit=0
 ```
 
+</details>
+
+<details><summary>вивід на good-variants</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/good-variants
+Підсумок: 0 FAIL, 15 PASS, 0 N/A → exit 0
+exit=0
+```
+
+</details>
+
+<details><summary>варіанти грейдера</summary>
+
+```
+check-contract — ~/ws4-scratch/fixtures/grader/fp
+Підсумок: 0 FAIL, 15 PASS, 0 N/A → exit 0
+exit=0
+```
+
+</details>
+
 `--changed-since`: у scratch-репозиторії з кодом `main` змінено один рядок наявного виклику n8n (таймаут 20 000 мс)
-і додано новий файл із тестовим URL — лишились знахідки лише зміненого виклику й нового файлу, решта —
-«проігноровано у незміненому коді»:
+і додано новий файл із тестовим URL. Лишились усі знахідки до зміненого виклику (C4–C9, кожна рахується, якщо
+змінено будь-який рядок виклику), знахідки «чого бракує у файлі» для зміненого файлу (`app/actions.ts:1`) і всі
+знахідки нового файлу; решта — «проігноровано у незміненому коді» (C1 і C3 у `.env.example`):
 
 <details><summary>вивід</summary>
 
 ```
 check-contract — ~/ws4-scratch/changed-since-test  (лише зміни після base)
-C1   FAIL  Тестовий URL /webhook-test/ відсутній у коді та .env.example (проігноровано у незміненому коді: 1)
+C1   FAIL  Тестовий URL /webhook-test відсутній у коді та .env.example (проігноровано у незміненому коді: 1)
        lib/ping.ts:2  тестовий URL вебхука в коді
 C2   PASS  Змінні N8N_* лише на сервері
 C3   PASS  .env.example: ключі контракту з безпечними значеннями (проігноровано у незміненому коді: 5)
-C4   FAIL  Виклики n8n лише з lib/n8n/client.* з import "server-only" (проігноровано у незміненому коді: 1)
+C4   FAIL  Виклики n8n лише з lib/n8n/client.* з import "server-only"
        app/actions.ts:54  fetch до n8n поза lib/n8n/client.*
        lib/ping.ts:2  fetch до n8n поза lib/n8n/client.*
+       app/actions.ts:1  модуль, що викликає n8n, не починається з import "server-only"
        lib/ping.ts:1  модуль, що викликає n8n, не починається з import "server-only"
 C5   FAIL  Кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000)
-       app/actions.ts:54  таймаут понад 10 000 мс
+       app/actions.ts:54  таймаут 20000 мс — понад 10 000
        lib/ping.ts:2  fetch до n8n без signal: AbortSignal.timeout(...)
 C6   FAIL  Заголовки контракту у виклику n8n
        app/actions.ts:54  немає заголовків: x-n8n-token, idempotency-key, x-correlation-id
@@ -454,16 +684,18 @@ C7   FAIL  Відповідь n8n — за кодом, ≤ 3 спроби, по�
        app/actions.ts:54  результат fetch до n8n відкидається — код статусу не перевіряється
        app/actions.ts:54  немає повторів для мережевих помилок, таймауту, 5xx і 524
        lib/ping.ts:2  немає повторів для мережевих помилок, таймауту, 5xx і 524
-C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data (проігноровано у незміненому коді: 2)
-       lib/ping.ts:2  тіло не має конверта { version, event, data }
-C9   PASS  Server Action не чекає n8n: виклик лише в after() (проігноровано у незміненому коді: 1)
+C8   FAIL  Тіло — конверт { version, event, data } з мінімальними data
+       app/actions.ts:54  у n8n іде цілий об'єкт lead, а не конверт { version, event, data }
+       lib/ping.ts:2  тіло не розпізнано як JSON.stringify({ version, event, data })
+C9   FAIL  Server Action не чекає n8n: виклик лише в after()
+       app/actions.ts:54  Server Action чекає n8n — перенести виклик у after() з "next/server"
 C10  PASS  Без export const runtime = "edge"
-C11  N/A   Колбек читає сире тіло й не парсить JSON до перевірки підпису — колбек-роутів (POST route з n8n/callback/webhook) не знайдено
+C11  N/A   Колбек читає сире тіло й не парсить JSON до перевірки підпису — колбек-роутів не знайдено (евристика — див. --help)
 C12  N/A   Колбек перевіряє HMAC-SHA256 над ${timestamp}.${raw} з timingSafeEqual — колбек-роутів не знайдено
-C13  N/A   Колбек: вікно 300 с, ідемпотентність, ключ = jobId:event, 202, стан до відповіді — колбек-роутів не знайдено
+C13  N/A   Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді — колбек-роутів не знайдено
 C14  PASS  Журнали без тіл, персональних даних і секретів
 C15  N/A   Колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl — колбеків у коді немає
-Підсумок: 6 FAIL, 5 PASS, 4 N/A → exit 1
+Підсумок: 7 FAIL, 4 PASS, 4 N/A → exit 1
 exit=1
 ```
 
