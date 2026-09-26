@@ -16,24 +16,30 @@ export type QuoteParseResult =
   | { ok: true; data: QuoteFormData }
   | { ok: false; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
-function text(formData: FormData, name: QuoteFormField, max: number) {
+/** Length limits: a longer value is a field error, never silently cut. */
+export const QUOTE_LIMITS = { company: 120, email: 200, description: 2000 } as const;
+
+function text(formData: FormData, name: QuoteFormField) {
   const value = formData.get(name);
-  return typeof value === "string" ? value.trim().slice(0, max) : "";
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function parseQuoteForm(formData: FormData): QuoteParseResult {
   const values: QuoteFormValues = {
-    company: text(formData, "company", 120),
-    email: text(formData, "email", 200).toLowerCase(),
-    description: text(formData, "description", 2000),
-    budget: text(formData, "budget", 10),
+    company: text(formData, "company"),
+    email: text(formData, "email").toLowerCase(),
+    description: text(formData, "description"),
+    budget: text(formData, "budget"),
   };
 
   const errors: Partial<Record<QuoteFormField, string>> = {};
 
   if (!values.company) errors.company = "Вкажіть компанію";
-  if (!EMAIL_RE.test(values.email)) errors.email = "Перевірте email";
+  else if (values.company.length > QUOTE_LIMITS.company) errors.company = `Назва задовга: ${values.company.length} із ${QUOTE_LIMITS.company} символів`;
+  if (values.email.length > QUOTE_LIMITS.email) errors.email = `Email задовгий: ${values.email.length} із ${QUOTE_LIMITS.email} символів`;
+  else if (!EMAIL_RE.test(values.email)) errors.email = "Перевірте email";
   if (values.description.length < 10) errors.description = "Опишіть задачу хоча б одним реченням";
+  else if (values.description.length > QUOTE_LIMITS.description) errors.description = `Опис задовгий: ${values.description.length} із ${QUOTE_LIMITS.description} символів`;
   if (values.budget && !BUDGET_OPTIONS.some((option) => option.value === values.budget)) {
     errors.budget = "Оберіть бюджет зі списку";
   }

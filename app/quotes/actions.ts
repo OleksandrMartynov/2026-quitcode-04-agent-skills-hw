@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
@@ -8,8 +9,7 @@ import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib
 
 export type RequestQuoteState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues }
-  | { status: "ok"; id: string };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
 // Public form, like the lead form: no session to check. The quote id is a random UUID,
 // so only whoever submitted the request knows the address of its status page.
@@ -47,5 +47,6 @@ export async function requestQuote(
     else await db.finishQuote(quote.id, { status: "failed", errorCode: "trigger_failed" });
   });
 
-  return { status: "ok", id: quote.id };
+  // A redirect from the action also works without JavaScript (303 to the status page).
+  redirect(`/quotes/${quote.id}`);
 }
