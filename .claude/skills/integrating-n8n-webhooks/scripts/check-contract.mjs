@@ -21,23 +21,30 @@ const HELP = `check-contract.mjs — статична перевірка код�
 
 Перевірки (деталі — SKILL.md і references/ цього скіла):
   C1  тестовий URL /webhook-test у коді чи .env.example
-  C2  змінні N8N_* лише на сервері (NEXT_PUBLIC_, "use client", next.config env, секрет у query, фолбек секрету)
+  C2  змінні N8N_* лише на сервері (NEXT_PUBLIC_, "use client", next.config env, секрет у query коду n8n,
+      фолбек секрету, токен x-n8n-token літералом)
   C3  .env.example: ключі контракту, база на /webhook, секрети change-me-…, змінні з коду оголошено
   C4  виклики n8n лише з lib/n8n/client.* з import "server-only" першим рядком
   C5  кожна спроба виклику n8n має AbortSignal.timeout(≤ 10 000), сигнал створено в циклі повторів
   C6  заголовки content-type, x-n8n-token, idempotency-key, x-correlation-id; ключ не генерується
       в клієнті на кожен виклик і не збігається з correlation-id
   C7  відповідь n8n оцінюється за кодом; ≤ 3 спроби; пауза між спробами; повтор лише для
-      мережі/таймауту/5xx/524, не для 4xx
+      мережі/таймауту/5xx/524, не для 4xx (continue, рекурсія чи throw у try, який ковтає catch;
+      цикл — навколо fetch або в обгортці з того ж файлу, напр. withRetry(() => fetch(…)))
   C8  тіло — JSON.stringify({ version, event, data }); data без усієї форми, цілих записів,
       IP, user agent, заголовків, сирих даних, секретів
   C9  Server Action (файл чи функція з "use server") не чекає n8n: виклик лише в after()
+      (зокрема через функції того ж файлу й модулі, що імпортують клієнт n8n)
   C10 жодного runtime = "edge"
-  C11 колбек читає сире тіло (.text()) і не парсить JSON до timingSafeEqual (чи функції, що його викликає)
-  C12 колбек перевіряє HMAC-SHA256 над \${timestamp}.\${raw}: довжина + timingSafeEqual, без ===
-  C13 колбек: 404/415/413, вікно ≤ 300 с, ключ лише із заголовка, claim ключа до JSON.parse і його
-      звільнення, 200 duplicate, звірка ключа з jobId:event, 202, стан до відповіді
-  C14 журнали без тіл, персональних даних і секретів
+  C11 колбек читає сире тіло (.text()) і не парсить JSON (JSON.parse, req.json(), req.clone().json(),
+      парсер із локального модуля) до timingSafeEqual (чи функції, що його викликає)
+  C12 колбек: createHmac("sha256") з .update(\`\${timestamp}.\${raw}\`) саме в такому порядку; довжина тих
+      самих буферів, що йдуть у timingSafeEqual; без ===/!== на підписі чи digest
+  C13 колбек: 404/415/413, вікно Math.abs(зараз − timestamp) ≤ 300 с, ключ лише із заголовка, claim
+      ключа до JSON.parse і його звільнення, duplicate з кодом 200, звірка ключа з jobId:event, 202,
+      стан до відповіді (ці пункти шукаються у файлі роуту, не в хелперах)
+  C14 журнали без тіл (і їхніх частин), усіх заголовків запиту, персональних даних і секретів
+      (err.message / err.name, Boolean(sig) — дозволено)
   C15 колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
 
 Як скрипт знаходить код n8n (евристики, не розбір TypeScript):
@@ -45,10 +52,13 @@ const HELP = `check-contract.mjs — статична перевірка код�
     зі значенням у .env.example, що містить /webhook чи :5678, літерал з /webhook чи :5678, або
     const з файлу, що бере їх (один крок); інші HTTP-клієнти (axios, ky) не розпізнаються —
     тоді C4 падає, якщо в коді є інші ознаки n8n (lib/n8n/, x-n8n-token, callbackUrl);
+  - URL, склеєний з частин ("…/webhook" + "-test"), і змінні NEXT_PUBLIC_* без N8N/WEBHOOK/
+    CALLBACK_SECRET/WORKFLOW у назві скрипт не бачить;
   - модулі n8n — файли з таким fetch і ті, що імпортують їх (транзитивно); виклик імпортованої
     звідти функції — запуск воркфлоу;
-  - колбек — POST у app/**/route.*, де шлях чи код згадує n8n, callback, webhook, workflow, job(s),
-    jobId, x-…-signature, x-…-timestamp, createHmac чи timingSafeEqual.
+  - колбек — POST у app/**/route.*, де шлях чи код згадує n8n, webhook, workflow, job(s), jobId,
+    x-…-signature, x-…-timestamp, idempotency-key, createHmac чи timingSafeEqual;
+  - теки tools/, materials/, docs/, build/, out/, coverage/, fixtures/ пропускаються лише в корені.
   Скрипт не замінює рев'ю: він ловить типові порушення, а не доводить відповідність.
 
 Результат: рядок на перевірку (PASS / FAIL / N/A), для FAIL — файл:рядок і причина.
@@ -83,16 +93,15 @@ if (!existsSync(ROOT) || !statSync(ROOT).isDirectory()) {
 
 // ---------------------------------------------------------------- files
 
-const SKIP_DIRS = new Set([
-  "node_modules", ".next", ".git", ".claude", ".agents", ".cursor", ".codex", "out", "build",
-  "coverage", ".vercel", "tools", "materials", "docs", "__tests__", "__fixtures__", "fixtures",
-]);
+// skipped at any depth / only in the project root (e.g. app/tools/ is still checked)
+const SKIP_DIRS = new Set(["node_modules", ".next", ".git", ".claude", ".agents", ".cursor", ".codex", ".vercel", "__tests__", "__fixtures__"]);
+const SKIP_ROOT_DIRS = new Set(["out", "build", "coverage", "tools", "materials", "docs", "fixtures"]);
 const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name), out);
+      if (!SKIP_DIRS.has(entry.name) && !(dir === ROOT && SKIP_ROOT_DIRS.has(entry.name))) walk(join(dir, entry.name), out);
     } else if (entry.isFile() && CODE_EXT.test(entry.name) && !entry.name.endsWith(".d.ts")
       && !/\.(test|spec)\.[a-z]+$/.test(entry.name)) {
       out.push(join(dir, entry.name));
@@ -445,7 +454,7 @@ function isRouteFile(f) { return /(^|\/)app\/(.*\/)?route\.(ts|tsx|js|jsx|mjs|cj
 function exportsPost(f) {
   return /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b|export\s*\{[^}]*\bPOST\b[^}]*\}/.test(f.code);
 }
-const CALLBACK_HINT = /n8n|callback|webhook|workflow|\bjobs?\b|jobId|job_id|x-[\w-]*signature|x-[\w-]*timestamp|createHmac|timingSafeEqual/i;
+const CALLBACK_HINT = /n8n|webhook|workflow|\bjobs?\b|jobId|job_id|x-[\w-]*signature|x-[\w-]*timestamp|idempotency-key|createHmac|timingSafeEqual/i;
 const callbackRoutes = files.filter((f) => isRouteFile(f) && exportsPost(f) && (CALLBACK_HINT.test(f.path) || CALLBACK_HINT.test(f.code)));
 
 // route + its local imports (one hop) for checks that may live in helpers
@@ -490,7 +499,12 @@ check("C2", "Змінні N8N_* лише на сервері", (add) => {
       }
     }
     if (/(^|\/)next\.config\.[a-z]+$/.test(f.path) && /\benv\s*:\s*\{[\s\S]*?N8N_/.test(f.code)) add(f.path, 1, "next.config env вбудовує N8N_* у клієнт");
-    for (const m of f.code.matchAll(/[?&](token|secret|signature|sig)=/gi)) add(f.path, f.lineOf(m.index), `секрет у query string (${m[1]}=)`);
+    const n8nCode = n8nModules.has(f) || callbackRoutes.includes(f);
+    for (const m of f.code.matchAll(/[?&](token|secret|signature|sig)=/gi)) {
+      const line = f.code.slice(f.code.lastIndexOf("\n", m.index) + 1, f.code.indexOf("\n", m.index) >>> 0);
+      if (n8nCode || /webhook|n8n/i.test(line)) add(f.path, f.lineOf(m.index), `секрет у query string (${m[1]}=)`);
+    }
+    for (const m of f.code.matchAll(/["']x-n8n-token["']\s*:\s*["'`]/gi)) add(f.path, f.lineOf(m.index), "токен x-n8n-token — літерал у коді (справжній секрет у git)");
     for (const m of f.code.matchAll(/process\.env\.(N8N_WEBHOOK_TOKEN|N8N_CALLBACK_SECRET)\s*(\?\?|\|\|)\s*(["'`])/g)) {
       add(f.path, f.lineOf(m.index), `літеральний фолбек для ${m[1]}`);
     }
@@ -630,6 +644,8 @@ check("C6", "Заголовки контракту у виклику n8n", (add)
     let headersText = opts.text;
     const hid = propValue(opts.text, "headers");
     if (hid && /^[A-Za-z_$][\w$]*$/.test(hid)) headersText += definitionOf(file, hid, call.start)?.text ?? "";
+    const hfn = hid?.match(/^([A-Za-z_$][\w$]*)\s*\(/);
+    if (hfn) { const body = functionBody(file, hfn[1]); if (body) headersText += file.code.slice(body.start, body.end + 1); }
     const lower = headersText.toLowerCase();
     const missing = HEADER_NAMES.filter((h) => !lower.includes(`"${h}"`) && !lower.includes(`'${h}'`));
     if (missing.length) atCall(add, file, call, `немає заголовків: ${missing.join(", ")}`);
@@ -677,35 +693,97 @@ function ifStatements(file, from, to) {
     if (close === -1) continue;
     const s = file.blank.slice(close + 1).search(/\S/) + close + 1;
     const end = file.blank[s] === "{" ? closeOf(file.blank, s) : exprEnd(file.blank, s);
-    out.push({ at: from + m.index, cond: file.code.slice(open + 1, close), stmt: file.code.slice(s, end + 1) });
+    out.push({ at: from + m.index, end, cond: file.code.slice(open + 1, close), stmt: file.code.slice(s, end + 1) });
   }
   return out;
+}
+
+// attempts of a `while (true)` / unresolved loop from its guard: `ARR[attempt - 1] === undefined -> return`
+// (array of pauses: length + 1 attempts) or `if (attempt >= N) return|break|throw`
+function attemptsFromGuard(file, loop) {
+  const body = file.code.slice(loop.bodyStart, loop.bodyEnd);
+  const arr = body.match(/\b([A-Za-z_$][\w$]*)\s*\[\s*[\w$]+\s*(?:-\s*1\s*)?\]/g) ?? [];
+  if (/===?\s*undefined/.test(body)) for (const a of arr) {
+    const n = arrayLength(file, a.slice(0, a.indexOf("[")).trim());
+    if (n !== null) return n + 1;
+  }
+  const g = body.match(/\b(\w*(?:attempt|retr|tries)\w*)\s*(>=|>)\s*([\w$.]+(?:\s*[+-]\s*\d+)?)/i);
+  if (g) { const n = evalNum(file, g[3]); if (n !== null) return g[2] === ">=" ? n : n + 1; }
+  return null;
+}
+
+// the name of the call whose argument contains idx (skipping arrow-function parentheses), e.g. withRetry(() => fetch(…))
+function enclosingCallName(file, idx) {
+  let depth = 0;
+  for (let k = idx - 1; k >= 0; k--) {
+    const ch = file.blank[k];
+    if (")]}".includes(ch)) depth++;
+    else if ("([{".includes(ch)) {
+      if (depth > 0) { depth--; continue; }
+      if (ch !== "(") return null;
+      const name = file.blank.slice(0, k).match(/([A-Za-z_$][\w$]*)\s*$/);
+      if (name && !/^(if|for|while|switch|return|await|function)$/.test(name[1])) return name[1];
+      if (name?.[1] === "function") return null;
+    }
+  }
+  return null;
 }
 
 check("C7", "Відповідь n8n — за кодом, ≤ 3 спроби, повтор лише мережа/таймаут/5xx/524", (add) => {
   if (!fetchSites.length) return "викликів n8n у коді не знайдено";
   for (const { file, call } of fetchSites) {
-    const before = file.blank.slice(Math.max(0, call.start - 40), call.start);
-    if (/(^|[;{}\n])\s*(await\s+|void\s+)?$/.test(before) && !/(=|return|\(|,|\?|:)\s*(await\s+)?$/.test(before)) {
-      atCall(add, file, call, "результат fetch до n8n відкидається — код статусу не перевіряється");
-    }
-    const loop = enclosingLoop(file, call.start);
+    // the result is used if the call follows =>, =, return, (, ",", ?, :, && or || (after an optional await)
+    const before = file.blank.slice(0, call.start).replace(/\s*\b(await|void)\s*$/, "").replace(/\s+$/, "");
+    const used = /(=>|=|return|\(|,|\?|:|&&|\|\||\[)$/.test(before);
+    if (!used && (before === "" || /[;{}]$/.test(before))) atCall(add, file, call, "результат fetch до n8n відкидається — код статусу не перевіряється");
+    let loop = enclosingLoop(file, call.start);
     const fn = enclosingFunctionStart(file, call.start);
+    let wrapper = null;
+    if (!loop) {
+      const name = enclosingCallName(file, call.start);
+      const body = name ? functionBody(file, name) : null;
+      const head = body ? /\b(for|while|do)\b\s*[({]/.exec(file.blank.slice(body.start, body.end)) : null;
+      if (head) {
+        const at = body.start + head.index + head[0].length - 1; // "(" of for/while, "{" of do
+        const opener = head[1] === "do" ? at : file.blank.indexOf("{", closeOf(file.blank, at));
+        const inner = enclosingLoop(file, opener + 1);
+        if (inner && inner.bodyStart > body.start && inner.bodyEnd < body.end) { loop = inner; wrapper = name; }
+      }
+    }
     const recursive = !loop && fn?.name && callsOf({ ...file, blank: file.blank.slice(0, fn.end) }, fn.name).some((c) => c.start > fn.brace);
     if (!loop && !recursive) { atCall(add, file, call, "немає повторів для мережевих помилок, таймауту, 5xx і 524"); continue; }
     const [from, to] = loop ? [loop.bodyStart, loop.bodyEnd] : [fn.brace, fn.end];
     const body = file.code.slice(from, to);
-    if (!/(>=|<)\s*500\b|>\s*499\b|\b524\b|\.status\s*>=\s*5\d\d/.test(body)) atCall(add, file, call, "повтори без перевірки на 5xx/524 — повторюватимуться й 4xx");
+    const at = wrapper ? file.lineOf(loop.start) : null;
+    const report = (reason) => (wrapper ? add(file.path, at, `${reason} (обгортка ${wrapper})`) : atCall(add, file, call, reason));
+    if (!/(>=|<)\s*500\b|>\s*499\b|\b524\b|\.status\s*>=\s*5\d\d/.test(body)) report("повтори без перевірки на 5xx/524 — повторюватимуться й 4xx");
     for (const st of ifStatements(file, from, to)) {
       const retries = loop ? /\bcontinue\b/.test(st.stmt) : new RegExp(`\\b${fn.name}\\s*\\(`).test(st.stmt);
       if (!retries) continue;
       if (/\b4\d\d\b|>=\s*400\b|>\s*399\b/.test(st.cond)) add(file.path, file.lineOf(st.at), "повтор для 4xx — 4xx не повторюємо ніколи");
       else if (/!\s*[\w$.]*\.ok\b|\.status\s*!==?\s*20\d\b/.test(st.cond) && !/500|524|5\d\d/.test(st.cond)) add(file.path, file.lineOf(st.at), "повтор для будь-якого не-2xx — повторюються й 4xx");
     }
-    if (!/setTimeout|\bsleep\s*\(|\bdelay\s*\(|\bwait\s*\(|\bpause\s*\(/.test(body)) atCall(add, file, call, "повтори без паузи (контракт: 1 с, потім 3 с)");
+    // throw inside try whose catch swallows the error = retry of that status
+    if (loop) for (const t of file.blank.slice(from, to).matchAll(/\btry\s*\{/g)) {
+      const tryOpen = from + t.index + t[0].length - 1;
+      const tryClose = closeOf(file.blank, tryOpen);
+      const c = /^\s*catch\s*(\([^)]*\))?\s*\{/.exec(file.blank.slice(tryClose + 1));
+      if (!c) continue;
+      const catchOpen = tryClose + 1 + c[0].length - 1;
+      const catchBody = file.code.slice(catchOpen, closeOf(file.blank, catchOpen));
+      if (/\b(throw|return)\b/.test(catchBody)) continue;
+      const tryBody = file.code.slice(tryOpen, tryClose);
+      const guard = /if\s*\([^)]*\.status\s*<\s*500[^)]*\)\s*(\{[^}]*)?return\b/.test(tryBody);
+      if (guard) continue;
+      const guarded = ifStatements(file, tryOpen, tryClose).filter((st) => /\bthrow\b/.test(st.stmt) && /(>=|>)\s*(500|499)\b|\b524\b/.test(st.cond) && !/\b4\d\d\b/.test(st.cond));
+      const throws = [...file.blank.slice(tryOpen, tryClose).matchAll(/\bthrow\b/g)].map((m) => tryOpen + m.index);
+      const free = throws.filter((i) => !guarded.some((st) => i > st.at && i <= st.end));
+      if (free.length) add(file.path, file.lineOf(free[0]), "throw у try, а catch повторює спробу — повторюються й 4xx");
+    }
+    if (!/setTimeout|\bsleep\s*\(|\bdelay\s*\(|\bwait\s*\(|\bpause\s*\(/.test(body)) report("повтори без паузи (контракт: 1 с, потім 3 с)");
     if (loop) {
-      const attempts = attemptsOf(file, loop);
-      if (attempts === null) add(file.path, file.lineOf(loop.start), "кількість спроб не розпізнано (очікується лічильник чи масив пауз з числом або const)");
+      const attempts = attemptsOf(file, loop) ?? attemptsFromGuard(file, loop);
+      if (attempts === null) add(file.path, file.lineOf(loop.start), "кількість спроб не розпізнано (очікується лічильник, масив пауз чи межа з числом або const)");
       else if (attempts > 3) add(file.path, file.lineOf(loop.start), `спроб більше трьох (${attempts})`);
     } else {
       const bound = body.match(/\b\w*(?:attempt|retr|tries)\w*\s*(<=|<)\s*([\w$.]+)/i);
@@ -792,7 +870,22 @@ check("C9", "Server Action не чекає n8n: виклик лише в after()
       const arg = c.args[0] ? f.code.slice(...c.args[0]).trim() : "";
       if (/^[A-Za-z_$][\w$]*$/.test(arg)) { const body = functionBody(f, arg); if (body) afterSpans.push([body.start, body.end]); }
     }
-    for (const site of triggerSites(f)) {
+    // same-file helper functions that (transitively) call n8n count as trigger sites too
+    const sites = triggerSites(f);
+    const helperNames = new Set();
+    for (let grew = true; grew;) {
+      grew = false;
+      const known = [...sites, ...[...helperNames].flatMap((n) => callsOf(f, n).map((call) => ({ call })))];
+      for (const s of known) {
+        const fn = enclosingFunctionStart(f, s.call.start);
+        if (fn?.name && !helperNames.has(fn.name) && !spans.some(([a, b]) => fn.brace >= a && fn.end <= b && b - a < f.code.length)) { helperNames.add(fn.name); grew = true; }
+      }
+    }
+    for (const n of helperNames) for (const call of callsOf(f, n)) {
+      const own = enclosingFunctionStart(f, call.start);
+      if (own?.name !== n) sites.push({ call, kind: "helper" });
+    }
+    for (const site of sites) {
       if (!spans.some(([a, b]) => site.call.start >= a && site.call.start <= b)) continue;
       any = true;
       const inside = afterSpans.some(([a, b]) => site.call.start > a && site.call.start < b);
@@ -805,7 +898,7 @@ check("C9", "Server Action не чекає n8n: виклик лише в after()
 // C10
 check("C10", 'Без export const runtime = "edge"', (add) => {
   for (const f of files) {
-    for (const m of f.code.matchAll(/export\s+const\s+runtime\s*=\s*["'`](experimental-)?edge["'`]/g)) add(f.path, f.lineOf(m.index), 'runtime = "edge" (deprecated у Next.js 16, немає node:crypto)');
+    for (const m of f.code.matchAll(/export\s+const\s+runtime\s*(?::[^=]+)?=\s*["'`](experimental-)?edge["'`]/g)) add(f.path, f.lineOf(m.index), 'runtime = "edge" (deprecated у Next.js 16, немає node:crypto)');
     for (const m of f.code.matchAll(/export\s+const\s+config\s*=\s*\{[^}]*runtime\s*:\s*["'`](experimental-)?edge/g)) add(f.path, f.lineOf(m.index), "config.runtime = edge");
   }
 });
@@ -846,10 +939,21 @@ function parsePoints(route) {
     if (fn?.name && fn.name !== "POST") parsers.add(fn.name);
     else points.push({ idx: m.index, via: "JSON.parse" });
   }
+  // parsers imported from local helper modules
+  for (const imp of importClauses(route)) {
+    if (!imp.target) continue;
+    for (const name of imp.names) {
+      const body = functionBody(imp.target, name);
+      if (body && /JSON\.parse\s*\(|\.json\s*\(\s*\)/.test(imp.target.code.slice(body.start, body.end))) parsers.add(name);
+    }
+  }
   if (parsers.size) for (const c of callsOf(route, [...parsers].join("|"))) {
     const fn = enclosingFunctionStart(route, c.start);
     if (!fn || !parsers.has(fn.name)) points.push({ idx: c.start, via: "JSON.parse" });
   }
+  // .json() / .formData() on the request (also req.clone().json())
+  const reqName = route.code.match(/function\s+POST\s*\(\s*([\w$]+)/)?.[1] ?? "req";
+  for (const m of route.code.matchAll(new RegExp(`\\b(?:${reqName}|req|request)\\b[\\w$.()]*?\\.(json|formData)\\s*\\(\\s*\\)`, "g"))) points.push({ idx: m.index, via: m[1] });
   return points;
 }
 
@@ -859,12 +963,12 @@ check("C11", "Колбек читає сире тіло й не парсить J
   for (const f of callbackRoutes) {
     for (const m of f.code.matchAll(/\.(json|formData)\s*\(\s*\)/g)) {
       const pre = f.code.slice(Math.max(0, m.index - 30), m.index);
-      if (/\b(req|request|\w*[Rr]eq\w*)\s*$/.test(pre) || /await\s+\w+\s*$/.test(pre)) add(f.path, f.lineOf(m.index), `тіло читається через .${m[1]}() — підпис рахується від сирого тексту`);
+      if (/\b(req|request|\w*[Rr]eq\w*)(\.clone\(\))?\s*$/.test(pre) || /await\s+\w+\s*$/.test(pre)) add(f.path, f.lineOf(m.index), `тіло читається через .${m[1]}() — підпис рахується від сирого тексту`);
     }
     if (!/\.(text|arrayBuffer)\s*\(\s*\)/.test(f.code)) add(f.path, 1, "тіло не читається як сирий текст (.text())", "file");
     const verifyIdx = verificationPoint(f);
     for (const p of parsePoints(f)) {
-      if (verifyIdx === -1 || p.idx < verifyIdx) add(f.path, f.lineOf(p.idx), "JSON.parse до перевірки підпису (timingSafeEqual)");
+      if (verifyIdx === -1 || p.idx < verifyIdx) add(f.path, f.lineOf(p.idx), `${p.via === "JSON.parse" ? "JSON.parse" : `.${p.via}()`} до перевірки підпису (timingSafeEqual)`);
     }
   }
 });
@@ -883,7 +987,18 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
       const [g, i] = hmac;
       const argsText = g.code.slice(i, i + 200);
       if (/createHmac\s*\(\s*["'`]sha256["'`]\s*,\s*["'`]/.test(argsText)) add(g.path, g.lineOf(i), "ключ HMAC — літерал, а не N8N_CALLBACK_SECRET");
-      if (!/\$\{[^}]+\}\.\$\{[^}]+\}|\+\s*["'`]\.["'`]\s*\+/.test(all)) add(g.path, g.lineOf(i), "HMAC рахується не від `${timestamp}.${raw}`");
+      // the argument of .update(…) on this createHmac chain (one const followed), must be `${timestamp}.${raw}`
+      const upd = /\.update\s*\(/.exec(g.blank.slice(i));
+      let updArg = "";
+      if (upd) {
+        const open = i + upd.index + upd[0].length - 1;
+        const spans = argSpans(g.blank, open);
+        updArg = spans[0] ? g.code.slice(...spans[0]).trim() : "";
+        if (/^[A-Za-z_$][\w$]*$/.test(updArg)) updArg = definitionOf(g, updArg)?.text ?? updArg;
+      }
+      const TS = String.raw`[\w$.]*(?:ts|timestamp|time)\w*`, RAW = String.raw`[\w$.]*(?:raw|body|payload|text)\w*`;
+      const ordered = new RegExp(String.raw`^\x60\$\{\s*${TS}\s*\}\.\$\{\s*${RAW}\s*\}\x60$|^${TS}\s*\+\s*["'\x60]\.["'\x60]\s*\+\s*${RAW}$`, "i");
+      if (!ordered.test(updArg)) add(g.path, g.lineOf(i), "HMAC рахується не від `${timestamp}.${raw}` (аргумент .update(…))");
     }
     const tse = at(/timingSafeEqual\s*\(/);
     if (!tse) add(route.path, 1, "немає crypto.timingSafeEqual", "file");
@@ -891,15 +1006,26 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
       const [g, i] = tse;
       const fn = enclosingFunctionStart(g, i);
       const scope = fn ? g.code.slice(fn.brace, i) : g.code.slice(Math.max(0, i - 400), i);
-      const sameChain = g.code.slice(Math.max(0, i - 160), i);
-      if (!/\.(byte)?[Ll]ength\s*(!==|===|!=|==|<|>)|(!==|===|!=|==)\s*[\w$.]+\.(byte)?[Ll]ength/.test(scope + sameChain)) add(g.path, g.lineOf(i), "немає перевірки довжини перед timingSafeEqual");
+      // the length check must compare the two buffers that are passed to timingSafeEqual
+      const spans = argSpans(g.blank, i + g.blank.slice(i).indexOf("("));
+      const [x, y] = spans.map((sp) => g.code.slice(...sp).trim());
+      const ident = /^[A-Za-z_$][\w$]*$/;
+      const esc = (v) => v.replace(/\$/g, "\\$");
+      const tied = x && y && ident.test(x) && ident.test(y) && x !== y
+        && new RegExp(`\\b(${esc(x)}|${esc(y)})\\.(byte)?[Ll]ength\\s*(!==|===|!=|==)\\s*(${esc(x)}|${esc(y)})\\.(byte)?[Ll]ength`).test(scope + g.code.slice(i, i + 5));
+      if (!tied) add(g.path, g.lineOf(i), "немає перевірки довжини тих самих буферів, що йдуть у timingSafeEqual");
     }
     const OPERAND = String.raw`[\w$.\[\]"'\x60-]+(?:\([^()]*\))?(?:\.[\w$]+(?:\([^()]*\))?)*`;
     const cmp = new RegExp(`(${OPERAND})\\s*(===|!==|==|!=)\\s*(${OPERAND})`, "g");
+    // variables that hold the header signature or a computed digest
+    const sigVars = new Set();
+    for (const g of group) for (const m of g.code.matchAll(/\b(?:const|let|var)\s+([\w$]+)\s*(?::[^=;\n]+)?=([^;\n]*)/g)) {
+      if (/headers\.get\(\s*["'`]x-[\w-]*signature|\.digest\s*\(/i.test(m[2])) sigVars.add(m[1]);
+    }
     for (const g of group) for (const m of g.code.matchAll(cmp)) {
       const [, left, op, right] = m;
       if (NULLISH.test(left) || NULLISH.test(right)) continue;
-      const operand = (s) => /sig|signature|hmac|digest/i.test(s) && !/\.(byte)?length$/i.test(s);
+      const operand = (s) => (/sig|signature|hmac|digest/i.test(s) || sigVars.has(s)) && !/\.(byte)?length$/i.test(s);
       if ((operand(left) || operand(right)) && !/typeof\s*$/.test(g.code.slice(Math.max(0, m.index - 8), m.index))) add(g.path, g.lineOf(m.index), `підпис порівнюється через ${op}`);
     }
   }
@@ -913,10 +1039,10 @@ check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парс�
     const all = group.map((g) => g.code).join("\n");
     const lower = all.toLowerCase();
     for (const [code, what] of [[404, "невідома подія → 404"], [415, "не-JSON → 415"], [413, "тіло > 64 KB → 413"]]) {
-      if (!new RegExp(`status\\s*:\\s*${code}\\b`).test(route.code)) add(route.path, 1, `немає відповіді ${what}`, "file");
+      if (!new RegExp(`(status\\s*:\\s*|[(,]\\s*)${code}\\b`).test(route.code)) add(route.path, 1, `немає відповіді ${what}`, "file");
     }
     if (!lower.includes("x-n8n-timestamp")) add(route.path, 1, "не читається x-n8n-timestamp", "file");
-    const abs = /Math\.abs\s*\(/.exec(route.blank);
+    const abs = [...route.blank.matchAll(/Math\.abs\s*\(/g)].find((m) => /Date\.now|\bnow\b|\bts\b|timestamp/i.test(route.code.slice(m.index, closeOf(route.blank, m.index + m[0].length - 1))));
     let windowS = null;
     if (abs) {
       const close = closeOf(route.blank, abs.index + abs[0].length - 1);
@@ -926,12 +1052,23 @@ check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парс�
       else if (!(windowS <= 300 || (windowS >= 1000 && windowS <= 300_000 && /Date\.now\(\)\s*-/.test(route.code.slice(abs.index, close))))) add(route.path, route.lineOf(abs.index), `вікно часу ${windowS} — понад 300 с`);
     } else add(route.path, 1, "немає двостороннього вікна часу (Math.abs(зараз − timestamp) > 300)", "file");
     const keyRead = route.code.match(/(?:const|let|var)\s+([\w$]+)\s*=\s*[\w$.]*headers\.get\(\s*["'`]idempotency-key["'`]\s*\)([^;\n]*)/i);
+    // an alias like `const key = hdr ? hdr : <from body>` is a fallback too
+    const alias = keyRead ? route.code.match(new RegExp(`(?:const|let|var)\\s+([\\w$]+)\\s*=\\s*([^;\\n]*\\b${keyRead[1]}\\b[^;\\n]*)`)) : null;
     if (!lower.includes("idempotency-key")) add(route.path, 1, "не читається idempotency-key", "file");
     else if (keyRead && /\?\?|\|\|/.test(keyRead[2])) add(route.path, route.lineOf(route.code.indexOf(keyRead[0])), "idempotency-key має братися лише із заголовка — фолбек із тіла дозволяє підмінити ключ");
+    else if (alias && /\?|\|\|/.test(alias[2])) add(route.path, route.lineOf(route.code.indexOf(alias[0])), "idempotency-key має братися лише із заголовка — фолбек із тіла дозволяє підмінити ключ");
+    const dup = [...route.code.matchAll(/duplicate/g)];
     if (!/duplicate/.test(all)) add(route.path, 1, "повтор ключа не відповідає 200 { duplicate: true }", "file");
-    const keyName = keyRead?.[1] ?? "key";
+    for (const d of dup) {
+      const lineText = route.code.slice(route.code.lastIndexOf("\n", d.index) + 1, route.code.indexOf("\n", d.index) >>> 0);
+      const st = lineText.match(/status\s*:\s*(\d{3})/);
+      if (st && st[1] !== "200") add(route.path, route.lineOf(d.index), `повтор ключа відповідає ${st[1]}, а не 200 — n8n повторюватиме колбек`);
+    }
+    const keyName = alias?.[1] ?? keyRead?.[1] ?? "key";
     const tmpl = String.raw`\x60[^\x60]*jobId\s*\}\s*:\s*\$\{[^\x60]*\x60|[\w$.]*jobId\s*\+\s*["'\x60]:["'\x60]\s*\+\s*[\w$.]+`;
-    if (!new RegExp(`\\b${keyName}\\s*(!==|===|!=|==)\\s*(${tmpl})|(${tmpl})\\s*(!==|===|!=|==)\\s*${keyName}\\b`).test(route.code)) {
+    const expectedVars = [...route.code.matchAll(/\b(?:const|let|var)\s+([\w$]+)\s*(?::[^=;\n]+)?=([^;\n]*)/g)].filter((m) => new RegExp(tmpl).test(m[2])).map((m) => m[1]);
+    const other = [tmpl, ...expectedVars.map((v) => `\\b${v}\\b`)].join("|");
+    if (!new RegExp(`\\b${keyName}\\s*(!==|===|!=|==)\\s*(${other})|(${other})\\s*(!==|===|!=|==)\\s*${keyName}\\b`).test(route.code)) {
       add(route.path, 1, "idempotency-key не звіряється з `${data.jobId}:${event}` з підписаного тіла", "file");
     }
     const claimRe = new RegExp(`(?<![\\w$])(?:[\\w$]+\\.)?(claim\\w*|reserve\\w*|acquire\\w*|lock\\w*|tryInsert\\w*|insert\\w*|add|setnx|set)\\s*\\(\\s*${keyName}\\b`, "gi");
@@ -954,7 +1091,7 @@ check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парс�
 });
 
 // C14
-const BAD_ARG = /^(body|raw|rawBody|payload|envelope|formData|data|req|request|headers|lead|row|record|input|values|fields)$/;
+const BAD_ARG = /^(body|raw|rawBody|payload|envelope|formData|data|parsed|req|request|headers|lead|row|record|input|values|fields)$/;
 const PII_PROP = /\.(email|phone|fullName|firstName|lastName|name|ipAddress|userAgent|notes?)\b/;
 const SECRET_WORD = /\b(token|secret|signature|sig|hmac|authorization|cookie|password)\b/i;
 check("C14", "Журнали без тіл, персональних даних і секретів", (add) => {
@@ -966,8 +1103,13 @@ check("C14", "Журнали без тіл, персональних даних 
         const wrapped = arg.match(/^(?:JSON\.stringify|String|inspect|util\.inspect)\s*\(\s*([\s\S]*?)\s*(?:,[\s\S]*)?\)$/);
         if (wrapped) arg = wrapped[1].trim();
         if (BAD_ARG.test(arg)) { add(f.path, line, `у журнал іде цілий об'єкт ${arg}`); continue; }
+        const part = arg.match(/^([\w$]+)\.(slice|substring|substr|toString)\s*\(/);
+        if (part && BAD_ARG.test(part[1])) { add(f.path, line, `у журнал іде частина тіла (${part[1]}.${part[2]})`); continue; }
+        if (/\b(req|request)\.headers\b(?!\.get)|Object\.fromEntries\s*\(\s*[\w$.]*headers\s*\)/.test(arg)) { add(f.path, line, "у журнал ідуть усі заголовки запиту (там підпис і токени)"); continue; }
         if (/process\.env|N8N_/.test(arg)) { add(f.path, line, "у журнал ідуть змінні середовища"); continue; }
-        const idents = arg.replace(/\b(Buffer\.byteLength|createHash|sha256|Object\.keys)\s*\([^)]*\)/g, "");
+        const idents = arg.replace(/\b(Buffer\.byteLength|createHash|sha256|Object\.keys|Boolean)\s*\([^)]*\)/g, "")
+          .replace(/!!\s*[\w$.]+|typeof\s+[\w$.]+/g, "")
+          .replace(/\(?\s*\b(err|error|e|cause)\b(\s+as\s+\w+)?\s*\)?\.(name|message|code|cause)\b/g, "");
         if (PII_PROP.test(idents)) { add(f.path, line, "у журнал ідуть персональні дані"); continue; }
         if (SECRET_WORD.test(idents.replace(/\.length\b/g, ""))) { add(f.path, line, "у журнал ідуть токен, підпис чи секрет"); continue; }
         const obj = arg.match(/^\{([\s\S]*)\}$/);
