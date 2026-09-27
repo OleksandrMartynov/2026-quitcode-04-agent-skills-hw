@@ -94,7 +94,8 @@ export async function updateLeadStatus(id: string, status: LeadStatus): Promise<
   if (!lead) return { status: "not_found" };
   if (!(LEAD_STATUSES as readonly unknown[]).includes(status)) return { status: "invalid" };
 
-  await db.updateLeadStatus(lead.id, status);
+  // The lead can be deleted between the check above and this write: then nothing was changed.
+  if (!(await db.updateLeadStatus(lead.id, status))) return { status: "not_found" };
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${lead.id}`);
   return { status: "ok" };
@@ -136,7 +137,7 @@ export async function deleteLead(id: string): Promise<LeadMutationState> {
   const lead = await findOwnLead(id);
   if (!lead) return { status: "not_found" };
 
-  await db.deleteLead(lead.id);
+  if (!(await db.deleteLead(lead.id))) return { status: "not_found" }; // already deleted by someone else
   revalidatePath("/dashboard");
   return { status: "ok" };
 }
