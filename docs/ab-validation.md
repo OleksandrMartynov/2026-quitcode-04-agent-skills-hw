@@ -437,6 +437,17 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
   - `838bfa4` — обірване тіло колбека → 400 (не 413); ключ «в обробці» старший за 60 с можна застовпити знову (обробник
     упав між claim і завершенням); пізній `failed` не перетирає `ready`.
 
+  Після другого рев'ю CodeRabbit (на `4d06789`, 4 зауваження; скіл — `74a82fb`, v0.4.11):
+  - `c9327f6` — помилка запуску (`trigger_failed`) змінює кошторис лише в `queued`/`processing` (`failQuoteTrigger`):
+    якщо колбек уже записав `ready` чи `failed` зі своїм кодом, результат лишається (`838bfa4` захищав лише `ready`);
+  - скіл: шаблон `parseCallback` вимагає `documentUrl` для `completed` і `error.code` для `failed`; виняток C13 для
+    `if (claim …)` — лише коли умова означає «ключ не наш» (`claim === "claimed"` з 400 без звільнення тепер FAIL);
+  - **не прийнято:** «перенести `quoteStore` і ключі колбеків у спільну БД/KV» (`lib/db.ts:288`). Сховище в пам'яті процесу —
+    навмисна демо-архітектура проєкту: `AGENTS.md` — «Дані синтетичні, у пам'яті (`lib/db.ts`)», так само зберігаються
+    ліди й користувачі з `main`. Для справжнього проєкту скіл уже вимагає таблицю з унікальним ключем і атомарний claim
+    (`references/code-templates.md`, `lib/n8n/store`; `references/callback.md`), а коментар у `lib/db.ts` каже, що
+    `callbackKeys` стоїть замість такої таблиці. Переписати сховище демо-застосунку на БД — окрема зміна поза задачею.
+
   `39be1a7`, `66c046a`, `f777499`, `2398c61`, `ddf886f` — старий код з `main`, якого запит не стосувався (агент B сам назвав
   `lead-created` порушенням контракту, але в межах задачі про кошториси його не чіпав). `176dbaa`, `bdb7dbd`, `92a5226` —
   код прогону B, але не контракт n8n: вади форми (пункти чекліста `building-client-form`) і безкінечне опитування знайшло
@@ -449,12 +460,12 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
   `APP_BASE_URL=http://127.0.0.1:3000`; `/webhook-test/` немає. `.env.local` гілки створено тим самим скриптом (старий файл
   з етапу 0 не відкривали — перейменовано на `.env.local.pre-ws4d`, обидва ігноруються git).
-- **`npm run lint`, `npm run build` на гілці:** exit 0, без попереджень — `~/ws4-runs/branch-lint-final6.log`,
-  `branch-build-final6.log` на `58d23c6` (фінальний код). Раніше: `branch-{lint,build}-final5.log` на `930f31c`,
+- **`npm run lint`, `npm run build` на гілці:** exit 0, без попереджень — `~/ws4-runs/branch-lint-final7.log`,
+  `branch-build-final7.log` на `74a82fb` (фінальний код). Раніше: `-final6.log` на `58d23c6`, `branch-{lint,build}-final5.log` на `930f31c`,
   `-final4.log` на `6bf19e8`; `branch-build-final3.log` — збірка після `ddf886f` (у файлі немає рядка з SHA).
 - **`check-contract.mjs` на фінальному коді** (0 FAIL, код виходу 0). Той самий вивід — у `~/ws4-runs/branch-check-final3.txt`
   (код `ddf886f`, чекер v0.4.7), `branch-check-final4.txt` (`6bf19e8`, v0.4.8), `branch-check-final5.txt` (`930f31c`, v0.4.9)
-  і `branch-check-final6.txt` (`58d23c6`, v0.4.10):
+  `branch-check-final6.txt` (`58d23c6`, v0.4.10) і `branch-check-final7.txt` (`74a82fb`, v0.4.11):
 
   ```
   $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs
@@ -601,7 +612,17 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
 
   Сканер (`~/ws4-runs/branch-server3-scan.txt`; для `branch-server2.log` — `branch-server2-scan.txt`): email — 1 (назва пакета
   npm), тексту форм, підписів і значень секретів — 0; 22 «телефонні» збіги — цифри всередині UUID і sha256.
-- **Фінальний код, HEAD `58d23c6`** (після раунду CodeRabbit і фінального рев'ю) — нова збірка, `npm start`, мок
+- **Фінальний код, HEAD `74a82fb`** (після другого рев'ю CodeRabbit; від `58d23c6` змінились лише `lib/db.ts`,
+  `app/quotes/actions.ts` і скіл) — нова збірка, `npm start`, мок `--mode respond-202 --delay 60000`:
+  - кошторис без JS → HTTP 303 на `/quotes/a62f702e…`; до колбека сторінка — «Готуємо кошторис», після валідного
+    колбека з матриці — «Кошторис готовий» з посиланням на PDF, адрес `@quotes.example.test` — 0 (`~/ws4-runs/branch-scenario7.txt`);
+  - матриця v0.4.10 — 14/14 тричі на трьох свіжих задачах (`~/ws4-runs/branch-callback-matrix-v7.txt`);
+  - мок `--mode immediately` (200 без `job_id`): кошторис одразу «Не вдалося підготувати кошторис», у журналі сервера —
+    `db:failQuoteTrigger` (`~/ws4-runs/branch-trigger-200.txt`, `branch-server7.log`); випадок «колбек раніше за помилку
+    запуску» прогоном не відтворювали — лише код (`failQuoteTrigger` змінює лише `queued`/`processing`);
+  - журнал сервера (`~/ws4-runs/branch-server7.log`, 601 рядок за `wc -l`), сканер (`branch-server7-scan.txt`): email — 1
+    (назва пакета npm), тексту форм («Synthetic»), адрес `example.test`, підписів і значень секретів — 0.
+- **Код `58d23c6`** (після раунду CodeRabbit і фінального рев'ю; сценарій у браузері й журнали) — нова збірка, `npm start`, мок
   `node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000`, потім `--delay 60000` для матриці:
   - кошторис без JS (`~/ws4-runs/branch-scenario6.txt`) → HTTP 303 на `/quotes/3ac1801a…`; через ~5 с сторінка — «Кошторис
     готовий» з посиланням на PDF, адрес `@quotes.example.test` на ній немає;
