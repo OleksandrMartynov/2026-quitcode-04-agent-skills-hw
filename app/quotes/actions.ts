@@ -30,16 +30,11 @@ export async function requestQuote(
 
   // The workflow runs 40–90 s: n8n answers 202 at once and reports the result to /api/n8n/quote-request.
   // Even the 202 (with retries) is not worth waiting for, so the user gets the status page right away.
+  // No email in data: the PDF link comes back in the callback and is shown on /quotes/[id], n8n writes to nobody.
   after(async () => {
     const result = await triggerWorkflow(
       "quote-request",
-      {
-        quoteId: quote.id,
-        company: quote.company,
-        email: quote.email,
-        description: quote.description,
-        budget: quote.budget,
-      },
+      { quoteId: quote.id, company: quote.company, description: quote.description, budget: quote.budget },
       { idempotencyKey: quote.idempotencyKey, correlationId: quote.correlationId },
       { callback: true },
     );

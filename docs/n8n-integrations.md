@@ -11,7 +11,9 @@
 ## `quote-request`
 
 - Запускає: Server Action `requestQuote` (`app/quotes/actions.ts`) з форми `/quotes/new`, виклик — в `after()`.
-- `data`: `quoteId`, `company`, `email`, `description`, `budget` (число або `null`).
+- `data`: `quoteId`, `company`, `description`, `budget` (число або `null`). Без email: посилання на PDF приходить у колбеку
+  й показується на `/quotes/[id]`, n8n нікому не пише. Якщо воркфлоу має надсилати кошторис листом — додати email лише
+  після узгодження з власником воркфлоу.
 - Воркфлоу працює 40–90 с, тому відповідь — 202 одразу, результат — підписаним колбеком:
   `data.status = "completed"` з `result.documentUrl` (лише `https:`) або `"failed"` з `error.code`.
 - Статус: `/quotes/[id]` (`queued` → `processing` → `ready` | `failed`), сторінка оновлюється кожні 5 с; якщо колбека немає
