@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { QuoteStatusRefresh } from "@/components/quote-status-refresh";
@@ -29,6 +30,14 @@ const STATUS_TEXT: Record<QuoteStatus, { title: string; hint: string; className:
     hint: "Спробуйте надіслати запит ще раз трохи пізніше.",
     className: "bg-red-100 text-red-800",
   },
+};
+
+// Anyone with the link sees the company and the task: keep the page out of search results, and do not
+// leak its URL (the only thing that protects it) to the sites the PDF link or other links lead to.
+export const metadata: Metadata = {
+  title: "Статус кошторису · LeadDesk",
+  robots: { index: false, follow: false },
+  referrer: "no-referrer",
 };
 
 export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
