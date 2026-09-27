@@ -43,9 +43,11 @@ const HELP = `check-contract.mjs — статична перевірка код�
       самих буферів (чи рядків у Buffer.from), що йдуть у timingSafeEqual; без ===/!== на підписі чи
       digest; результат перевірки відхиляє запит (if (!…) return)
   C13 колбек: 404/415/413, вікно Math.abs(зараз − timestamp) ≤ 300 с (чи 300 000 мс), ключ лише із
-      заголовка, claim ключа після перевірки підпису й до JSON.parse, звільнення ключа, duplicate з
-      кодом 200, звірка ключа з jobId:event, 202,
-      стан до відповіді (ці пункти шукаються у файлі роуту, не в хелперах)
+      заголовка, claim ключа після перевірки підпису й до JSON.parse, звільнення ключа на шляху кожної
+      відповіді 4xx/5xx після claim (у тому ж блоці, у finally чи в хелпері, через який повертають),
+      duplicate з кодом 200, звірка ключа з jobId:event, 202, запис стану (db.<метод>, save/update/
+      finish…) до відповіді: не лише в after() і не без await (void, .then/.catch)
+      (ці пункти шукаються у файлі роуту, не в хелперах)
   C14 журнали без тіл (і їхніх частин: raw.slice, body.data, \${raw} у шаблоні), усіх заголовків
       запиту, персональних даних і секретів (err.message / err.name, Boolean(sig) — дозволено)
   C15 колбек лежить у app/api/n8n/[event]/route.*, якщо конверт шле callbackUrl
@@ -1165,6 +1167,77 @@ check("C12", "Колбек перевіряє HMAC-SHA256 над ${timestamp}.${
   }
 });
 
+// C13 helpers
+// the "{" that opens the block around `idx` (-1 at top level)
+function blockOpen(text, idx) {
+  let depth = 0;
+  for (let k = idx - 1; k >= 0; k--) {
+    const ch = text[k];
+    if (ch === "}") depth++;
+    else if (ch === "{") { if (depth === 0) return k; depth--; }
+  }
+  return -1;
+}
+// `return …` statements with a 4xx/5xx status after `from`, inside the function that holds `from`
+// (not the claim's own "already taken" answer: that key is not ours to free)
+function rejectsAfter(file, from) {
+  let top = blockOpen(file.blank, from);
+  for (let up = top; up !== -1; up = blockOpen(file.blank, up)) top = up;
+  const end = top === -1 ? file.blank.length : closeOf(file.blank, top);
+  const out = [];
+  for (const m of file.blank.slice(from, end).matchAll(/\breturn\b/g)) {
+    const idx = from + m.index;
+    if (!file.blank.slice(from, idx).includes(";")) continue;
+    const stmt = file.blank.slice(idx, exprEnd(file.blank, idx + 6));
+    const lit = stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*(\d{3})\b/) ?? stmt.match(/\bstatus\s*:\s*(\d{3})\b/);
+    const named = lit ? null : stmt.match(/\bstatus\s*:\s*([A-Z_][A-Z0-9_]*)\b/) ?? stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*([A-Z_][A-Z0-9_]*)\s*,/);
+    const status = lit ? Number(lit[1]) : named ? evalNum(file, named[1]) : null;
+    if (status >= 400) out.push({ idx, stmt, status });
+  }
+  return out;
+}
+// the key is released before this return on its own path: in the statement, earlier in the same block
+// (closed nested blocks excluded), in an enclosing finally, or inside the helper it returns through
+function releasedOnPath(file, r, releaseRe) {
+  if (releaseRe.test(r.stmt)) return true;
+  const open = blockOpen(file.blank, r.idx);
+  let before = file.blank.slice(open + 1, r.idx), prev;
+  do { prev = before; before = before.replace(/\{[^{}]*\}/g, (b) => " ".repeat(b.length)); } while (before !== prev);
+  if (releaseRe.test(before)) return true;
+  for (const f of file.blank.matchAll(/\bfinally\s*\{/g)) {
+    const o = f.index + f[0].length - 1;
+    const tryOpen = blockOpen(file.blank, f.index);
+    const tryStart = file.blank.lastIndexOf("try", f.index);
+    if (tryStart !== -1 && tryStart > tryOpen && r.idx > tryStart && r.idx < o && releaseRe.test(file.blank.slice(o, closeOf(file.blank, o)))) return true;
+  }
+  const callee = r.stmt.match(/^return\s+(?:await\s+)?([\w$]+)\s*\(/)?.[1];
+  const def = callee && file.blank.match(new RegExp(`(?:function\\s+${callee}\\s*\\(|(?:const|let|var)\\s+${callee}\\s*=)`));
+  if (def) {
+    const o = file.blank.indexOf("{", def.index);
+    if (o !== -1 && releaseRe.test(file.blank.slice(o, closeOf(file.blank, o)))) return true;
+  }
+  return false;
+}
+const WRITE_VERB = /^(save|update|insert|set|persist|store|mark|complete|upsert|finish|record|write|commit)/i;
+const READ_VERB = /^(get|find|list|read|load|fetch|has|count|select|query|claim|release|reserve|acquire|lock|unlock|free|forget|delete|del|remove)/i;
+// state writes after `from`: a write-verb call, or any non-read method of a store object (db.finishJob)
+function stateWrites(file, from) {
+  const out = [];
+  for (const m of file.blank.matchAll(/(?<![\w$.])(?:([\w$]+)\.)?([\w$]+)\s*\(/g)) {
+    const [, obj, name] = m;
+    if (m.index < from || /function\s+$/.test(file.blank.slice(Math.max(0, m.index - 10), m.index))) continue;
+    const store = obj && /^(db|store|repo|repository|prisma|kv|redis|storage|dao)$/i.test(obj);
+    if (READ_VERB.test(name) || !(WRITE_VERB.test(name) || store)) continue;
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(file.blank, open);
+    const lead = file.blank.slice(Math.max(0, m.index - 8), m.index);
+    const detached = /\bvoid\s+$/.test(lead)
+      || (!/\b(await|return|yield)\s+$/.test(lead) && close !== -1 && /^\s*\.\s*(then|catch|finally)\s*\(/.test(file.blank.slice(close + 1)));
+    out.push({ idx: m.index, detached });
+  }
+  return out;
+}
+
 // C13
 check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парсингу, ключ = jobId:event, 202, стан до відповіді", (add) => {
   if (!callbackRoutes.length) return "колбек-роутів не знайдено";
@@ -1224,13 +1297,18 @@ check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парс�
       if (vIdx !== -1 && claimIdx < vIdx) add(route.path, route.lineOf(claimIdx), "claim ключа до перевірки підпису — непідписаний запит займе ключ");
       const releaseRe = new RegExp(`(?<![\\w$])(?:[\\w$]+\\.)?([\\w$]*(?:[Rr]elease|[Uu]nlock|[Rr]emove|[Ff]orget|[Ff]ree)[\\w$]*|delete|del)\\s*\\(\\s*${keyName}\\b`, "i");
       if (!releaseRe.test(route.blank)) add(route.path, route.lineOf(claimIdx), "після claim немає звільнення ключа при 400 чи збої — n8n не зможе повторити");
+      else for (const r of rejectsAfter(route, claimIdx)) { // each 4xx/5xx path frees the key itself: a release on another branch does not count
+        if (!releasedOnPath(route, r, releaseRe)) add(route.path, route.lineOf(r.idx), `відповідь ${r.status} після claim не звільняє ключ — n8n не зможе повторити колбек`);
+      }
     }
     if (!hasStatus(202)) add(route.path, 1, "успіх не відповідає 202", "file");
     const afterSpans = callsOf(route, "after|unstable_after").map((c) => [c.open, c.close]);
-    if (afterSpans.length) {
-      const writes = [...route.blank.matchAll(/(?<![\w$.])(?:[\w$]+\.)?(save|update|insert|set|persist|store|mark|complete|upsert)\w*\s*\(/gi)]
-        .map((m) => m.index).filter((i) => !/function\s+$/.test(route.code.slice(Math.max(0, i - 10), i)));
-      if (writes.length && writes.every((i) => afterSpans.some(([a, b]) => i > a && i < b))) add(route.path, route.lineOf(afterSpans[0][0]), "стан зберігається лише в after() — n8n не повторить колбек після 2xx");
+    const inAfter = (i) => afterSpans.some(([a, b]) => i > a && i < b);
+    const writes = stateWrites(route, claims.length ? Math.min(...claims) : 0);
+    if (writes.length && writes.every((w) => inAfter(w.idx))) add(route.path, route.lineOf(afterSpans[0][0]), "стан зберігається лише в after() — n8n не повторить колбек після 2xx");
+    else if (writes.length && writes.every((w) => inAfter(w.idx) || w.detached)) {
+      const w = writes.find((x) => x.detached);
+      add(route.path, route.lineOf(w.idx), "стан зберігається без await (void/.then) — 202 піде раніше за запис, а збій не звільнить ключ");
     }
   }
 });

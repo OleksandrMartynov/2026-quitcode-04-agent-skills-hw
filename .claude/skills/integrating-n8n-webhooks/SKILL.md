@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.7"
+  version: "0.4.8"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -100,8 +100,8 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
 - [ ] C10 Без runtime = "edge".
 - [ ] C11 Колбек читає req.text(); жодного JSON.parse до timingSafeEqual.
 - [ ] C12 HMAC-SHA256 над `${timestamp}.${raw}`, перевірка довжини + timingSafeEqual, без ===.
-- [ ] C13 404/415/413, вікно ≤ 300 с, ключ лише із заголовка, claim до JSON.parse і звільнення ключа,
-          200 duplicate, звірка з jobId:event, 202, стан — до відповіді.
+- [ ] C13 404/415/413, вікно ≤ 300 с, ключ лише із заголовка, claim до JSON.parse, звільнення ключа
+          на кожній 4xx/5xx після claim, 200 duplicate, звірка з jobId:event, 202, стан — з await до відповіді.
 - [ ] C14 У журналах немає тіл, персональних даних і секретів.
 - [ ] C15 Колбек — у app/api/n8n/[event]/route.ts, якщо конверт шле callbackUrl.
 ```
