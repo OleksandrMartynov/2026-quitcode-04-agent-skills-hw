@@ -23,23 +23,25 @@ export async function triggerWorkflow(
   ids: { idempotencyKey: string; correlationId: string },
   options: { callback?: boolean } = {},
 ): Promise<TriggerResult> {
-  const base = process.env.N8N_WEBHOOK_BASE_URL;
   const token = process.env.N8N_WEBHOOK_TOKEN;
-  if (!base || !token || (options.callback && !process.env.APP_BASE_URL)) {
+  const url = webhookUrl(process.env.N8N_WEBHOOK_BASE_URL, event);
+  let callbackUrl: string | undefined;
+  try {
+    if (options.callback) callbackUrl = new URL(`/api/n8n/${event}`, process.env.APP_BASE_URL).toString();
+  } catch {} // немає чи зламаний APP_BASE_URL — callbackUrl лишається undefined
+  if (!url || !token || (options.callback && !callbackUrl)) {
     console.error("n8n.out", { event, error: "not_configured" }); // без throw: after() позначить запис failed
     return { ok: false, status: null };
   }
-  const callbackUrl = options.callback
-    ? new URL(`/api/n8n/${event}`, process.env.APP_BASE_URL).toString()
-    : undefined;
   const body = JSON.stringify({ version: 1, event, data, ...(callbackUrl ? { callbackUrl } : {}) });
 
   for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
     const started = Date.now();
     let status: number | null = null;
     try {
-      const res = await fetch(`${base}/${event}`, {
+      const res = await fetch(url, {
         method: "POST",
+        redirect: "error", // редирект переніс би тіло й x-n8n-token на іншу адресу
         headers: {
           "content-type": "application/json",
           "x-n8n-token": token,
@@ -51,10 +53,15 @@ export async function triggerWorkflow(
       });
       status = res.status;
       logCall(event, ids.correlationId, status, started, attempt, body);
-      if (res.ok) {
-        const jobId = res.status === 202 ? ((await res.json().catch(() => null))?.job_id ?? null) : null;
-        return { ok: true, status, jobId };
+      if (res.status === 202) {
+        const jobId = (await res.json().catch(() => null))?.job_id;
+        if (typeof jobId === "string" && jobId) return { ok: true, status, jobId };
+        if (!options.callback) return { ok: true, status, jobId: null };
+        return { ok: false, status }; // воркфлоу з колбеком відповідає 202 з job_id
       }
+      await res.body?.cancel(); // тіло не потрібне — звільнити з'єднання
+      // 200 там, де чекаємо колбек, — воркфлоу не дійшов до Respond to Webhook: колбека не буде
+      if (res.ok) return options.callback ? { ok: false, status } : { ok: true, status, jobId: null };
       if (res.status < 500) return { ok: false, status }; // 4xx: виправляти, не повторювати
     } catch {
       logCall(event, ids.correlationId, null, started, attempt, body); // мережа або TimeoutError
@@ -64,6 +71,17 @@ export async function triggerWorkflow(
     await new Promise((resolve) => setTimeout(resolve, delay)); // 5xx, 524, мережа, таймаут
   }
   return { ok: false, status: null };
+}
+
+// токен — лише через https; http — тільки на цю машину (локальний n8n чи мок)
+function webhookUrl(base: string | undefined, event: string) {
+  try {
+    const url = new URL(`${base}/${event}`);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    return url.protocol === "https:" || (url.protocol === "http:" && local) ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 function logCall(event: string, correlationId: string, status: number | null, started: number, attempt: number, body: string) {
@@ -106,8 +124,9 @@ export async function requestSomething(_prev: FormState, formData: FormData): Pr
       { jobRef: record.id /* лише поля, потрібні воркфлоу */ },
       { idempotencyKey: record.idempotencyKey, correlationId: record.correlationId },
       { callback: true },
-    );
-    await db.updateJob(record.id, result.ok ? { status: "processing", jobId: result.jobId } : { status: "failed" });
+    ).catch(() => null); // after() ніхто не чекає: навіть неочікуваний виняток має закінчитись failed
+    // колбек прийде лише після 202 з job_id; інакше запис чекав би вічно
+    await db.updateJob(record.id, result?.ok && result.jobId ? { status: "processing", jobId: result.jobId } : { status: "failed" });
   });
 
   return { status: "ok", id: record.id };
@@ -119,7 +138,7 @@ export async function requestSomething(_prev: FormState, formData: FormData): Pr
 ```ts
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { after } from "next/server";
-import { claimCallbackKey, releaseCallbackKey, saveCallbackResult } from "@/lib/n8n/store";
+import { claimCallbackKey, completeCallbackKey, releaseCallbackKey, saveCallbackResult } from "@/lib/n8n/store";
 
 const KNOWN_EVENTS = new Set(["<event>"]);
 const MAX_BODY_BYTES = 64 * 1024;
@@ -132,8 +151,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     return Response.json({ error: "unsupported_media_type" }, { status: 415 });
   }
 
-  const raw = await req.text(); // сире тіло: підпис рахується від цих байтів
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 });
+  const tooLarge = () => Response.json({ error: "too_large" }, { status: 413 });
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return tooLarge(); // заявлено забагато
+  const raw = await readRawBody(req.body); // сире тіло: підпис рахується від цих байтів
+  if (raw === null) return tooLarge(); // chunked без content-length: ліміт — під час читання
 
   const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
   const ts = Number(timestamp);
@@ -142,7 +163,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 
   const key = req.headers.get("idempotency-key");
   if (!key) return Response.json({ error: "bad_request" }, { status: 400 });
-  if (!(await claimCallbackKey(key))) return Response.json({ duplicate: true }, { status: 200 });
+  const claim = await claimCallbackKey(key);
+  if (claim === "done") return Response.json({ duplicate: true }, { status: 200 });
+  // інша доставка ще зберігає й може звільнити ключ: хай n8n повторить, а не вважає готовим
+  if (claim === "processing") return Response.json({ error: "in_progress" }, { status: 409 });
 
   try {
     const body = parseCallback(raw);
@@ -151,6 +175,7 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
       return Response.json({ error: "bad_request" }, { status: 400 });
     }
     await saveCallbackResult(body.data); // мінімальний стан — ДО відповіді
+    await completeCallbackKey(key); // тепер повтор — дублікат
   } catch {
     await releaseCallbackKey(key);
     return Response.json({ error: "internal" }, { status: 500 });
@@ -160,6 +185,26 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     // повільне: листи, сповіщення
   });
   return Response.json({ ok: true }, { status: 202 });
+}
+
+// читає тіло як текст, але зупиняється на MAX_BODY_BYTES: непідписаний запит не змусить буферизувати більше
+async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | null> {
+  if (!body) return "";
+  let bytes = 0;
+  const limited = body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        bytes += chunk.byteLength;
+        if (bytes > MAX_BODY_BYTES) controller.error(new Error("too_large"));
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  try {
+    return await new Response(limited).text();
+  } catch {
+    return null;
+  }
 }
 
 function verifySignature(timestamp: string, raw: string, header: string | null) {
@@ -202,6 +247,8 @@ function isHttpsUrl(value: unknown) {
 }
 ```
 
-`lib/n8n/store` повинен: `claimCallbackKey(key)` — атомарно вставити ключ, `false`, якщо вже є;
-`releaseCallbackKey(key)` — видалити; `saveCallbackResult(data)` — знайти запис за `data.jobId` або
-`data.requestIdempotencyKey` і зберегти статус та `result.documentUrl`/`error.code`.
+`lib/n8n/store` повинен: `claimCallbackKey(key)` — атомарно вставити ключ зі станом `processing` і
+повернути `"claimed"`, а якщо ключ уже є — його стан (`"processing"` чи `"done"`); `completeCallbackKey(key)` —
+перевести в `done` після збереження результату; `releaseCallbackKey(key)` — видалити;
+`saveCallbackResult(data)` — знайти запис за `data.jobId` або `data.requestIdempotencyKey` і зберегти статус та
+`result.documentUrl`/`error.code`. Дублікат (200) — лише ключ у стані `done`.

@@ -44,7 +44,9 @@ const HELP = `check-contract.mjs — статична перевірка код�
       digest; результат перевірки відхиляє запит (if (!…) return)
   C13 колбек: 404/415/413, вікно Math.abs(зараз − timestamp) ≤ 300 с (чи 300 000 мс), ключ лише із
       заголовка, claim ключа після перевірки підпису й до JSON.parse, звільнення ключа на шляху кожної
-      відповіді 4xx/5xx після claim (у тому ж блоці, у finally чи в хелпері, через який повертають),
+      відповіді 4xx/5xx після claim (у тому ж блоці, у finally чи в хелпері, через який повертають;
+      відповіді самого claim — «дублікат» і «ще в обробці», у тому ж виразі чи в if за його результатом, —
+      ключа не звільняють),
       duplicate з кодом 200, звірка ключа з jobId:event, 202, запис стану (db.<метод>, save/update/
       finish…) до відповіді: не лише в after() і не без await (void, .then/.catch)
       (ці пункти шукаються у файлі роуту, не в хелперах)
@@ -1179,8 +1181,10 @@ function blockOpen(text, idx) {
   return -1;
 }
 // `return …` statements with a 4xx/5xx status after `from`, inside the function that holds `from`
-// (not the claim's own "already taken" answer: that key is not ours to free)
+// (not the claim's own "already taken" / "still in progress" answers: that key is not ours to free —
+// the same statement as the claim, or an `if` on the variable that holds its result)
 function rejectsAfter(file, from) {
+  const held = file.blank.slice(Math.max(0, from - 80), from).match(/(?:const|let|var)\s+([\w$]+)\s*(?::[^=;]+)?=\s*(?:await\s+)?$/)?.[1];
   let top = blockOpen(file.blank, from);
   for (let up = top; up !== -1; up = blockOpen(file.blank, up)) top = up;
   const end = top === -1 ? file.blank.length : closeOf(file.blank, top);
@@ -1188,6 +1192,11 @@ function rejectsAfter(file, from) {
   for (const m of file.blank.slice(from, end).matchAll(/\breturn\b/g)) {
     const idx = from + m.index;
     if (!file.blank.slice(from, idx).includes(";")) continue;
+    if (held) {
+      const seg = file.blank.slice(Math.max(file.blank.lastIndexOf(";", idx), file.blank.lastIndexOf("}", idx)) + 1, idx);
+      const cond = seg.match(/\bif\s*\(([\s\S]*)\)\s*\{?\s*$/);
+      if (cond && new RegExp(`(?<![\\w$.])${held.replace(/\$/g, "\\$")}(?![\\w$])`).test(cond[1])) continue;
+    }
     const stmt = file.blank.slice(idx, exprEnd(file.blank, idx + 6));
     const lit = stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*(\d{3})\b/) ?? stmt.match(/\bstatus\s*:\s*(\d{3})\b/);
     const named = lit ? null : stmt.match(/\bstatus\s*:\s*([A-Z_][A-Z0-9_]*)\b/) ?? stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*([A-Z_][A-Z0-9_]*)\s*,/);

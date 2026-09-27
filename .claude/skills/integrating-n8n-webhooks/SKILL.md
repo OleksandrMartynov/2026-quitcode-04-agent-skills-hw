@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.8"
+  version: "0.4.9"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -44,6 +44,9 @@ metadata:
 | `N8N_CALLBACK_SECRET` | секрет HMAC колбеків (Crypto credential в n8n) | `change-me-callback-secret` |
 | `APP_BASE_URL` | адреса застосунку для `callbackUrl` | `http://127.0.0.1:3000` |
 
+`N8N_WEBHOOK_BASE_URL` у production — лише `https:`; `http:` — тільки loopback (локальний n8n, мок): клієнт
+перевіряє схему до виклику й не йде за редиректами (`redirect: "error"`), щоб токен не пішов відкритим каналом.
+
 **Виклик n8n** — деталі й чому: [references/outgoing-request.md](references/outgoing-request.md).
 
 1. Лише модуль `lib/n8n/client.ts`, перший рядок — `import "server-only"`; інших `fetch` до n8n немає.
@@ -55,7 +58,8 @@ metadata:
    для асинхронних воркфлоу.
 5. Кожна спроба — `signal: AbortSignal.timeout(10_000)`; до 2 повторів (пауза 1 с, потім 3 с) **лише** на
    мережеву помилку, таймаут, 5xx чи 524, з тим самим `idempotency-key`; 4xx не повторюємо ніколи.
-6. Відповідь n8n оцінюємо лише за кодом статусу; текст не парсимо (з 202 беремо тільки `job_id`).
+6. Відповідь n8n оцінюємо лише за кодом статусу; текст не парсимо (з 202 беремо тільки `job_id`). Для воркфлоу з
+   колбеком успіх — лише 202 з `job_id`: 200 означає, що до Respond to Webhook не дійшло, і колбека не буде.
 7. Дія з UI — Server Action: сесія, права й валідація всередині (`server-auth-actions`); вона зберігає запис
    (напр. `status: "queued"`), повертає лише `{ status, id }`, а виклик n8n із повторами — в `after()`
    (`server-after-nonblocking`). Не-React клієнт — Route Handler. Ніколи `export const runtime = "edge"`.
@@ -72,14 +76,16 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
 (чому — [references/callback.md](references/callback.md)):
 
 1. Невідомий `[event]` → 404; `content-type` не `application/json` → 415 — ще до читання тіла.
-2. `const raw = await req.text()`; ні `req.json()`, ні `JSON.parse` до перевірки підпису.
-3. `raw` > 64 KB → 413.
+2. `raw` — сирий текст тіла (`req.text()` чи потік із лічильником байтів); ні `req.json()`, ні `JSON.parse` до
+   перевірки підпису.
+3. Понад 64 KB → 413 — за `content-length` і під час читання, а не після буферизації всього тіла.
 4. `|зараз − x-n8n-timestamp| > 300 с` → 401.
 5. HMAC від `` `${timestamp}.${raw}` ``: порівняти довжини, потім `crypto.timingSafeEqual`; не `===`. Не збіглося → 401 без деталей.
-6. «Застовпити» `idempotency-key` (унікальний запис); уже є → 200 `{"duplicate": true}`.
+6. «Застовпити» `idempotency-key` (унікальний запис зі станом «в обробці»); уже завершений → 200
+   `{"duplicate": true}`; ще в обробці → 409, щоб n8n повторив (перша доставка може впасти й звільнити ключ).
 7. Лише тепер `JSON.parse(raw)` і перевірка форми: `event` у тілі ≠ `<event з шляху>.completed` або
    ключ ≠ `${data.jobId}:${event}` → 400 (і звільнити ключ).
-8. Зберегти мінімальний стан **до** відповіді; збій після кроку 6 → звільнити ключ.
+8. Зберегти мінімальний стан **до** відповіді й позначити ключ завершеним; збій після кроку 6 → звільнити ключ.
 9. Відповісти 202 `{"ok": true}`; повільне (листи, сповіщення) — в `after()`.
 
 **Журнали**: подія, напрям, `x-correlation-id`, код, тривалість, номер спроби, довжина й sha256 тіла. Ніколи —
