@@ -126,7 +126,8 @@ export async function requestSomething(_prev: FormState, formData: FormData): Pr
       { callback: true },
     ).catch(() => null); // after() ніхто не чекає: навіть неочікуваний виняток має закінчитись failed
     // колбек прийде лише після 202 з job_id; інакше запис чекав би вічно
-    await db.updateJob(record.id, result?.ok && result.jobId ? { status: "processing", jobId: result.jobId } : { status: "failed" });
+    if (result?.ok && result.jobId) await db.updateJob(record.id, { status: "processing", jobId: result.jobId });
+    else await db.failJobIfPending(record.id); // лише з queued/processing: результат колбека не перетираємо
   });
 
   return { status: "ok", id: record.id };
@@ -233,8 +234,10 @@ function parseCallback(raw: string): Callback | null {
     const data = body?.data;
     if (body?.version !== 1 || typeof body.event !== "string" || typeof data?.jobId !== "string") return null;
     if (data.status !== "completed" && data.status !== "failed") return null;
-    // the link ends up on a page: only https, never javascript: or data:
-    if (data.result?.documentUrl !== undefined && !isHttpsUrl(data.result.documentUrl)) return null;
+    // кожен статус несе свій результат: completed — посилання (лише https — воно потрапить на сторінку,
+    // ніколи javascript: чи data:), failed — код помилки; неповна форма — 400, до збереження й до `done`
+    if (data.status === "completed" && !isHttpsUrl(data.result?.documentUrl)) return null;
+    if (data.status === "failed" && (typeof data.error?.code !== "string" || !data.error.code)) return null;
     return body;
   } catch {
     return null;
@@ -255,4 +258,6 @@ function isHttpsUrl(value: unknown) {
 ~60 с (обробник упав, не завершивши й не звільнивши ключ), вважати простроченим і застовпити знову;
 `completeCallbackKey(key)` — перевести в `done` після збереження результату; `releaseCallbackKey(key)` — видалити;
 `saveCallbackResult(data)` — знайти запис за `data.jobId` або `data.requestIdempotencyKey` і зберегти статус та
-`result.documentUrl`/`error.code`, не перетираючи `ready` пізнім `failed`. Дублікат (200) — лише ключ у стані `done`.
+`result.documentUrl`/`error.code`, не перетираючи `ready` пізнім `failed`; `failJobIfPending(id)` — позначити `failed`
+лише запис у `queued`/`processing` (колбек міг завершити його раніше, ніж повернувся виклик n8n). Дублікат (200) — лише
+ключ у стані `done`.

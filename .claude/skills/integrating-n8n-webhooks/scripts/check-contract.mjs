@@ -46,7 +46,8 @@ const HELP = `check-contract.mjs — статична перевірка код�
       заголовка, claim ключа після перевірки підпису й до JSON.parse, звільнення ключа на шляху кожної
       відповіді 4xx/5xx після claim (у тому ж блоці, у finally чи в хелпері, через який повертають;
       відповіді самого claim — «дублікат» і «ще в обробці», у тому ж виразі чи в if за його результатом, —
-      ключа не звільняють),
+      ключа не звільняють; гілкою claim вважається лише умова «ключ не наш»: !claimed, claim === "done"/
+      "processing", claim !== "claimed"),
       duplicate з кодом 200, звірка ключа з jobId:event, 202, запис стану (db.<метод>, save/update/
       finish…) до відповіді: не лише в after() і не без await (void, .then/.catch)
       (ці пункти шукаються у файлі роуту, не в хелперах)
@@ -1180,9 +1181,22 @@ function blockOpen(text, idx) {
   }
   return -1;
 }
+// the whole `if` condition says "the claim did NOT give us the key": !claimed, claim === "done" / "processing" / …
+// (any literal but "claimed"), claim !== "claimed". `claim === "claimed"` or a bare `claimed` means the key is ours.
+function takenCondition(cond, held) {
+  const v = held.replace(/\$/g, "\\$");
+  const c = cond.trim().replace(/^\((.*)\)$/s, "$1").trim();
+  if (new RegExp(`^!\\s*\\(?\\s*${v}\\s*\\)?$`).test(c)) return true;
+  const eq = c.match(new RegExp(`^(?:${v}\\s*(===?|!==?)\\s*(["'\x60])([\\w-]+)\\2|(["'\x60])([\\w-]+)\\4\\s*(===?|!==?)\\s*${v})$`));
+  if (!eq) return false;
+  const op = eq[1] ?? eq[6], lit = eq[3] ?? eq[5];
+  const ours = /^(claimed|acquired|ok|new|fresh|won)$/i.test(lit);
+  return op.startsWith("!") ? ours : !ours;
+}
+
 // `return …` statements after `from`, inside the function that holds `from`, with their status (null if unknown)
 // and `own`: one of the claim's own answers ("already taken" / "still in progress" — that key is not ours to free):
-// the same statement as the claim, or an `if` whose whole condition is about the variable that holds its result
+// the same statement as the claim, or an `if` whose whole condition says the claim did not give us the key
 function returnsAfter(file, from) {
   const held = file.blank.slice(Math.max(0, from - 80), from).match(/(?:const|let|var)\s+([\w$]+)\s*(?::[^=;]+)?=\s*(?:await\s+)?$/)?.[1];
   const heldRe = held && new RegExp(`(?<![\\w$.])${held.replace(/\$/g, "\\$")}(?![\\w$])`);
@@ -1196,8 +1210,8 @@ function returnsAfter(file, from) {
     let cond = null;
     if (!own && heldRe) {
       const segStart = Math.max(file.blank.lastIndexOf(";", idx), file.blank.lastIndexOf("}", idx)) + 1;
-      const c = file.blank.slice(segStart, idx).match(/\bif\s*\(([\s\S]*)\)\s*\{?\s*$/);
-      if (c && heldRe.test(c[1]) && !/&&|\|\|/.test(c[1])) { own = true; cond = file.code.slice(segStart, idx); }
+      const c = file.code.slice(segStart, idx).match(/\bif\s*\(([\s\S]*)\)\s*\{?\s*$/);
+      if (c && heldRe.test(c[1]) && takenCondition(c[1], held)) { own = true; cond = c[1]; }
     }
     const stmt = file.blank.slice(idx, exprEnd(file.blank, idx + 6));
     const lit = stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*(\d{3})\b/) ?? stmt.match(/\bstatus\s*:\s*(\d{3})\b/);
