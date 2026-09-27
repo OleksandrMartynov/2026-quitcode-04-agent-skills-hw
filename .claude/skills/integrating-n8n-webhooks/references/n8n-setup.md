@@ -13,7 +13,12 @@
 3. **Respond to Webhook** — JSON, код `202`, тіло `{"job_id": "{{ $execution.id }}"}`.
 4. …робота воркфлоу…
 5. **Edit Fields** — `ts` = `{{ Math.floor($now.toSeconds()) }}`, `body` = `{{ JSON.stringify({ version: 1,
-   event: '<event>.completed', data: { jobId: $execution.id, … } }) }}`. Той самий рядок і підписуємо, і відправляємо.
+   event: '<event>.completed', data: { jobId: $execution.id, status: 'completed' | 'failed',
+   correlationId: $('Webhook').item.json.headers['x-correlation-id'],
+   requestIdempotencyKey: $('Webhook').item.json.headers['idempotency-key'],
+   result: { documentUrl } | error: { code }, completedAt: $now.toISO() } }) }}`. Той самий рядок і підписуємо, і
+   відправляємо. `requestIdempotencyKey` обов'язковий: якщо відповідь 202 загубилась і застосунок не знає `jobId`, лише за
+   ним колбек знайде запис (`references/response-modes.md`).
 6. **Crypto** (v2) — `Hmac`, `SHA256`, `HEX`, значення `{{ $json.ts + '.' + $json.body }}`, credential Crypto
    з Hmac Secret = `N8N_CALLBACK_SECRET`.
 7. **HTTP Request** — `POST` на `{{ $('Webhook').item.json.body.callbackUrl }}`; заголовки `x-n8n-timestamp`,
