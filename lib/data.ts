@@ -23,14 +23,7 @@ export const getWorkspace = cache(async ({ slug }: { slug: string }) => {
 });
 
 export async function getLeadRows(workspaceId: string): Promise<LeadRow[]> {
-  const leads = await db.getLeads(workspaceId);
-  return leads.map(({ id, fullName, company, status, createdAt }) => ({
-    id,
-    fullName,
-    company,
-    status,
-    createdAt,
-  }));
+  return db.getLeadRows(workspaceId); // projected in the store, not cut down from full records
 }
 
 export async function getLeadStats(workspaceId: string) {

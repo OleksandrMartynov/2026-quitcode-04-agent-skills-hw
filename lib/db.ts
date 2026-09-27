@@ -1,6 +1,7 @@
 import type {
   AuditEntry,
   Lead,
+  LeadRow,
   LeadSource,
   LeadStats,
   LeadStatus,
@@ -326,6 +327,16 @@ export const db = {
         .filter((lead) => lead.workspaceId === workspaceId)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .map((lead) => structuredClone(lead)),
+    );
+  },
+
+  /** The dashboard table's five fields, projected in the store: the rest of each lead is never copied. */
+  getLeadRows(workspaceId: string): Promise<LeadRow[]> {
+    return query("getLeads", () =>
+      store.leads
+        .filter((lead) => lead.workspaceId === workspaceId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(({ id, fullName, company, status, createdAt }) => ({ id, fullName, company, status, createdAt })),
     );
   },
 
