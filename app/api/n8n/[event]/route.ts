@@ -23,11 +23,12 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return reply(415, { error: "unsupported_media_type" });
   }
-  // Cheap early refusal of a declared oversized body; the byte check below still covers chunked requests.
+  // Cheap early refusal of a declared oversized body; the streamed limit below covers chunked requests.
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return reply(413, { error: "too_large" });
 
-  raw = await req.text(); // the raw body: the signature covers exactly these bytes
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return reply(413, { error: "too_large" });
+  const text = await readRawBody(req.body); // the raw body: the signature covers exactly these bytes
+  if (text === null) return reply(413, { error: "too_large" });
+  raw = text;
 
   const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
   const ts = Number(timestamp);
@@ -36,7 +37,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 
   const key = req.headers.get("idempotency-key");
   if (!key) return reply(400, { error: "bad_request" });
-  if (!(await db.claimCallbackKey(key))) return reply(200, { duplicate: true });
+  const claim = await db.claimCallbackKey(key);
+  if (claim === "done") return reply(200, { duplicate: true });
+  // Another delivery holds the key and may still fail and release it: ask n8n to retry, not "done".
+  if (claim === "processing") return reply(409, { error: "in_progress" });
 
   try {
     const body = parseCallback(raw);
@@ -52,12 +56,33 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     }
     // Saved before the response: after a 2xx n8n will not send this callback again.
     await db.finishQuote(quote.id, body.outcome, body.jobId);
+    await db.completeCallbackKey(key);
   } catch {
     await db.releaseCallbackKey(key);
     return reply(500, { error: "internal" });
   }
 
   return reply(202, { ok: true });
+}
+
+// Reads the body as text but stops at MAX_BODY_BYTES: an unauthenticated sender cannot make us buffer more.
+async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | null> {
+  if (!body) return "";
+  let bytes = 0;
+  const limited = body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        bytes += chunk.byteLength;
+        if (bytes > MAX_BODY_BYTES) controller.error(new Error("too_large"));
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  try {
+    return await new Response(limited).text();
+  } catch {
+    return null;
+  }
 }
 
 function verifySignature(timestamp: string, raw: string, header: string | null) {

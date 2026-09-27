@@ -44,6 +44,7 @@ const LATENCY_MS = {
   setQuoteJob: 80,
   finishQuote: 80,
   claimCallbackKey: 20,
+  completeCallbackKey: 20,
   releaseCallbackKey: 20,
 } as const;
 
@@ -279,10 +280,12 @@ const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
 
 // Quotes live in their own global so a store created before they existed keeps working in `next dev`.
-// callbackKeys stands in for a table with a unique constraint on the callback idempotency-key.
-type QuoteStore = { quotes: Quote[]; callbackKeys: Set<string> };
+// callbackKeys stands in for a table with a unique constraint on the callback idempotency-key
+// and a state column: "processing" while the first delivery is being saved, "done" once it is.
+type CallbackKeyState = "processing" | "done";
+type QuoteStore = { quotes: Quote[]; callbackKeys: Map<string, CallbackKeyState> };
 const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: QuoteStore };
-const quoteStore = (globalForQuotes.leadDeskQuotes ??= { quotes: [], callbackKeys: new Set() });
+const quoteStore: QuoteStore = (globalForQuotes.leadDeskQuotes ??= { quotes: [], callbackKeys: new Map() });
 
 const SESSION_PREFIX = "demo-";
 
@@ -477,13 +480,19 @@ export const db = {
     });
   },
 
-  /** Atomically records a callback key; false if it was already there. */
-  claimCallbackKey(key: string) {
+  /** Atomically records a callback key as "processing"; otherwise returns the state it already has. */
+  claimCallbackKey(key: string): Promise<"claimed" | CallbackKeyState> {
     return query("claimCallbackKey", () => {
-      if (quoteStore.callbackKeys.has(key)) return false;
-      quoteStore.callbackKeys.add(key);
-      return true;
+      const state = quoteStore.callbackKeys.get(key);
+      if (state) return state;
+      quoteStore.callbackKeys.set(key, "processing");
+      return "claimed";
     });
+  },
+
+  /** Marks a claimed key as done: from now on a repeat is a duplicate. */
+  completeCallbackKey(key: string) {
+    return query("completeCallbackKey", () => quoteStore.callbackKeys.set(key, "done").size > 0);
   },
 
   releaseCallbackKey(key: string) {
