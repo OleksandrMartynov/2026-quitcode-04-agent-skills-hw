@@ -132,7 +132,7 @@ tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
 | Правило (id) | Коміт | Файли | Що змінилось | Було (`main`, `084f9ff`) | Стало | Як міряли |
 |---|---|---|---|---|---|---|
 | `async-parallel` | `92bd9b9` | `app/dashboard/page.tsx` | три незалежні запити (`getLeads` 400 мс, `getLeadStats` 1200 мс, `getSourceBreakdown` 400 мс) більше не чекаються по черзі — `Promise.all` | TTFB / total: 2,235 / 2,235 с; 2,231 / 2,231 с; 2,228 / 2,228 с | 1,424 / 1,424 с; 1,428 / 1,428 с; 1,424 / 1,425 с | `curl` × 3 після прогріву, продакшн |
-| `server-serialization` | `e22e94c` (+ `8b8cebf` — уточнено коментар `LeadRow`) | `app/dashboard/page.tsx`, `components/leads-table.tsx`, `lib/data.ts`, `lib/types.ts` | Client Component `LeadsTable` отримує `LeadRow` (5 полів, які він рендерить), а не повний `Lead` з 29 полів; DTO будує `getLeadRows` на сервері | HTML 424 592 B, RSC 315 197 B; у HTML і RSC — по 344 email, 344 телефони `+380…`, по 172 `internalNotes`, `rawPayload`, `ipAddress` і 344 `userAgent` | HTML 111 377 B, RSC 31 257 B; email, телефонів і цих ключів — 0 | `wc -c` і `grep -o … \| wc -l` (детерміновано) |
+| `server-serialization` | `e22e94c` (+ `8b8cebf` — уточнено коментар `LeadRow`; + `3eb945a` після рев'ю CodeRabbit — рядки проєктуються в сховищі, а не з клонів повних лідів: RSC той самий 31 257 B, `~/ws4-runs/taskA-after-projection.txt`) | `app/dashboard/page.tsx`, `components/leads-table.tsx`, `lib/data.ts`, `lib/types.ts` | Client Component `LeadsTable` отримує `LeadRow` (5 полів, які він рендерить), а не повний `Lead` з 29 полів; DTO будує `getLeadRows` на сервері | HTML 424 592 B, RSC 315 197 B; у HTML і RSC — по 344 email, 344 телефони `+380…`, по 172 `internalNotes`, `rawPayload`, `ipAddress` і 344 `userAgent` | HTML 111 377 B, RSC 31 257 B; email, телефонів і цих ключів — 0 | `wc -c` і `grep -o … \| wc -l` (детерміновано) |
 | `server-auth-actions` | `9144df3` (+ `5aa43a6` — відмову видно в UI; + `4d4acf3` після рев'ю CodeRabbit — лід, видалений між перевіркою й записом, дає `not_found`, а не `ok`) | `app/actions.ts`, `components/lead-actions.tsx` | `updateLeadStatus` і `deleteLead` перевіряють сесію (`getCurrentUser`), що лід належить воркспейсу користувача, і статус зі списку `LEAD_STATUSES`; повертають `{ status }`, за яким `LeadActions` відкочує оптимістичне оновлення | відтворення (нижче): Marta з воркспейсу brightline змінює `lead_0001` studio-nova `qualified → lost`, підроблена cookie — `→ hacked` (невалідний статус) | Marta → `{"status":"not_found"}`, статус не змінився; підроблена cookie → `x-action-redirect: /login`, статус не змінився; власниця з невалідним статусом → `{"status":"invalid"}` | `curl -X POST` на `/dashboard/leads/lead_0001` з `Next-Action: <id updateLeadStatus>` з `.next/server/server-reference-manifest.json`, тіло `["lead_0001","<статус>"]` |
 
 - **Чому обрали для заміру `async-parallel`:** це й є скарга клієнта (дашборд > 2 с), а затримки запитів
@@ -297,7 +297,7 @@ tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
 Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал мока й час
 відповіді форми — у `docs/ab-validation.md`.
 
-- **Що лишили в `SKILL.md`, а що винесли в `references/` (і чому):** у `SKILL.md` (180 рядків) — те, що агент має
+- **Що лишили в `SKILL.md`, а що винесли в `references/` (і чому):** у `SKILL.md` (181 рядок) — те, що агент має
   зробити щоразу: таблиця чотирьох змінних (і хто генерує секрети), 7 кроків вихідного виклику, правило вибору
   режиму, порядок обробки колбека з точною відповідністю назв (`<event>` у шляху, `<event>.completed` у тілі, ключ
   `${data.jobId}:${event}`), що писати в журнал, чекліст з тими самими id, що в `check-contract.mjs`, правила й Verify.
@@ -307,22 +307,23 @@ tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
   реєстру інтеграцій), `code-templates.md` (клієнт, Server Action і колбек-роут під Next 16), `traps.md` (відомі
   пастки й межі). Кожен файл — пряме посилання з `SKILL.md`, між собою вони не посилаються. Приклади з записки про
   `quote-request` замінено на `<event>`/`lead-created` (перевірка: `grep -rniwE "quotes?|кошторис\w*|nova dental"
-  .claude/skills/integrating-n8n-webhooks --exclude=mock-n8n.mjs` → 0 збігів). `scripts/mock-n8n.mjs` — байт-у-байт
-  копія `tools/mock-n8n.mjs` (`cmp` без розбіжностей).
+  .claude/skills/integrating-n8n-webhooks --exclude=mock-n8n.mjs` → 0 збігів). `scripts/mock-n8n.mjs` — копія
+  `tools/mock-n8n.mjs`: до v0.4.12 байт-у-байт (`cmp` без розбіжностей), з v0.4.13 — з однією зміною в трьох місцях
+  (адреса колбека в журналі — лише origin + шлях; `~/ws4-runs/mock-copy-diff.txt`), `tools/` не змінювали.
 - **Наскільки текст скіла збігається із запискою** (`materials/n8n-webhooks-brief.md`). Метод — скрипт поза
   репозиторієм (`~/ws4-runs/anticopy.mjs`): кожен непорожній рядок `SKILL.md` і `references/*.md` нормалізуємо
   (прибираємо маркери markdown `|*>#` і бектики, нумерацію списку, зайві пробіли, регістр) і рахуємо рядки від 40
   символів, що дорівнюють нормалізованому рядку записки або містяться в ньому; окремо — частку 8-грам слів кожного
-  файлу, що є в записці. Результат на v0.4.12 (`~/ws4-runs/taskC-v12-anticopy.txt`): **5 з 370 рядків (1,4 %)** (v0.4.11 — 5 з 369, v0.4.10 — 5 з 365, v0.4.9 — 5 з 347; v0.4.8 — 5 з 309, 1,6 %: нові рядки — шаблони й причини) — довідкові факти й вирази, які переказувати
+  файлу, що є в записці. Результат на v0.4.13 (`~/ws4-runs/taskC-v13-anticopy.txt`; рядки — як на v0.4.12): **5 з 370 рядків (1,4 %)** (v0.4.11 — 5 з 369, v0.4.10 — 5 з 365, v0.4.9 — 5 з 347; v0.4.8 — 5 з 309, 1,6 %: нові рядки — шаблони й причини) — довідкові факти й вирази, які переказувати
   немає сенсу (100 с → 524, `serverActions.bodySizeLimit`, `{{ $json.headers['idempotency-key'] }}`, «файли не
-  передаємо…», рядок про реєстр); 8-грами — від 0 % (`code-templates.md`) до 14,5 % (`traps.md`), `SKILL.md` — 1,1 %.
+  передаємо…», рядок про реєстр); 8-грами — від 0 % (`code-templates.md`) до 14,5 % (`traps.md`), `SKILL.md` — 1,0 %.
   (Перша версія звіту казала «1 з 283»: тоді рахувались лише рядки, ідентичні рядку записки, а метод не був
   записаний.)
 
   <details><summary>вивід anticopy.mjs</summary>
 
   ```
-  8-grams SKILL.md: 19/1809 (1.1 %)
+  8-grams SKILL.md: 19/1819 (1.0 %)
   8-grams references/callback.md: 4/593 (0.7 %)
   8-grams references/code-templates.md: 0/1196 (0.0 %)
   8-grams references/n8n-setup.md: 33/266 (12.4 %)
@@ -492,7 +493,7 @@ tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
   `1baef90` (v0.4.0: `description` після промаху p8, пункт про `edge`), `cc1940a` (v0.4.1: чекер після третього
   раунду), `9f575c2` (v0.4.2: `cc1940a` зламала чекер — неекранований `${raw}` у тексті `--help` кидав
   `ReferenceError` на кожному запуску; виправлено, після чого перезапущено `--help` і всі фікстури), `042942b` (v0.4.3) і
-  `708f97a` (v0.4.4), `4f2756d` (v0.4.5), `b43f5b0` (v0.4.6), `d986329` (v0.4.7), `151ddf5` (v0.4.8), `930f31c` (v0.4.9), `58d23c6` (v0.4.10), `74a82fb` (v0.4.11), `7c0adad` (v0.4.12) — див. наступний пункт. **BASE для Task D — `43acafd`** (після таблиці «Скіли видно»; три скіли,
+  `708f97a` (v0.4.4), `4f2756d` (v0.4.5), `b43f5b0` (v0.4.6), `d986329` (v0.4.7), `151ddf5` (v0.4.8), `930f31c` (v0.4.9), `58d23c6` (v0.4.10), `74a82fb` (v0.4.11), `7c0adad` (v0.4.12), `7cdb41c` (v0.4.13) — див. наступний пункт. **BASE для Task D — `43acafd`** (після таблиці «Скіли видно»; три скіли,
   виправлення Task A, E2; без `/quotes` і змін у виклику n8n). Скіл у копії B — з `042942b`.
 - **Що скіл змінив у собі після прогонів (коміти й чому):**
   - `042942b` (v0.4.3) — після прогону A, до прогону B: на коді A чекер v0.4.2 давав лише 2 FAIL, бо URL вебхука приходив
@@ -554,6 +555,10 @@ tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
     самі; добра тека й копія шаблону — `taskC-template-files-v11.txt`, `taskC-template-build-v11.log` (exit 0).
   - `7c0adad` (v0.4.12) — третє рев'ю CodeRabbit: Verify чекав `Підсумок: 13/13`, хоча з v0.4.10 матриця має 14 кейсів —
     агент, що звіряє Verify дослівно, не закрив би пункт. Тепер `14/14` і перелік нових кейсів; скрипти не змінювались.
+  - `7cdb41c` (v0.4.13) — четверте рев'ю CodeRabbit: мок друкував `--callback-url` як є (токен у query чи `user:password`
+    потрапили б у журнал) — тепер лише origin + шлях, прогін — `~/ws4-runs/mock-safe-url.txt`; `send-signed-callback.mjs`
+    на некоректний `--url` виходить з кодом 2, а не падає з 1 (`send-signed-bad-url.txt`). Чекер не змінювався; 95 збережених
+    виводів — ті самі.
 
 **Як `check-contract.mjs` знаходить код n8n і де його межі** (те саме — у `--help`). Скрипт — евристики над текстом,
 а не розбір TypeScript. Вихідний виклик — `fetch`, у чиєму URL є змінна середовища з `N8N`/`WEBHOOK`/`WORKFLOW` у
@@ -1230,8 +1235,8 @@ exit=1
 **`check-contract.mjs` на фінальному коді** (гілка після перенесення прогону B `050a5bc` і доробок `39be1a7`, `66c046a`,
 `2398c61`, `bdb7dbd`, `92a5226`, `176dbaa`, `07ec6d7`, `ddf886f`, `50d20ce` і правок після рев'ю CodeRabbit `d227c13`,
 `7350738`, `8fdf465`, `ae50666`, `961c2e0`, фінального рев'ю `6471b55`, `838bfa4`, другого рев'ю CodeRabbit `c9327f6` і
-третього — `4d4acf3`, `9a912b3`; вивід на `7c0adad` чекером v0.4.12 — `~/ws4-runs/branch-check-final8.txt`, той самий, що
-й у `branch-check-final3.txt` (`ddf886f`, v0.4.7), `-final4.txt` (`6bf19e8`, v0.4.8), `-final5.txt` (`930f31c`, v0.4.9),
+третього — `4d4acf3`, `9a912b3`, четвертого — `3eb945a`; вивід на `3eb945a` чекером v0.4.13 —
+`~/ws4-runs/branch-check-final9.txt`, той самий, що й у `branch-check-final8.txt` (`7c0adad`, v0.4.12), `branch-check-final3.txt` (`ddf886f`, v0.4.7), `-final4.txt` (`6bf19e8`, v0.4.8), `-final5.txt` (`930f31c`, v0.4.9),
 `-final6.txt` (`58d23c6`, v0.4.10) і `-final7.txt` (`74a82fb`, v0.4.11); подробиці перенесення —
 `docs/ab-validation.md`):
 
@@ -1257,16 +1262,17 @@ C15  PASS  Колбек лежить у app/api/n8n/[event]/route.*, якщо к
 exit=0
 ```
 
-**Додатково — матриця колбеків** проти гілки на фінальному коді (`7c0adad`: `npm start`, мок `--mode respond-202 --delay
-60000`, `jobId` незавершеної задачі — з рядка мока `workflow <jobId> running` після відправки форми без JS). Скрипт
-v0.4.10 (далі не змінювався) — 14 кейсів, серед них тіло > 64 KB частинами без `content-length` → 413 і дві одночасні
-доставки → 202 і 409; три прогони на трьох свіжих задачах — 14/14 щоразу (`~/ws4-runs/branch-callback-matrix-v8.txt`; на
-`58d23c6` і `74a82fb` так само — `-v6.txt`, `-v7.txt`). Раніше, 13 кейсів скриптом v0.4.7: 3 × 13/13 на `ddf886f`,
-`6bf19e8`, `930f31c` (`-v3.txt`, `-v4.txt`, `-v5.txt`). Нижче перший прогін v8:
+**Додатково — матриця колбеків** проти гілки на фінальному коді (`3eb945a`: `npm start`, мок **зі скіла**
+`scripts/mock-n8n.mjs --mode respond-202 --delay 60000`, `jobId` незавершеної задачі — з рядка мока `workflow <jobId> running`
+після відправки форми без JS). Скрипт v0.4.13 (кейси — як у v0.4.10) — 14 кейсів, серед них тіло > 64 KB частинами без
+`content-length` → 413 і дві одночасні доставки → 202 і 409; три прогони на трьох свіжих задачах — 14/14 щоразу
+(`~/ws4-runs/branch-callback-matrix-v9.txt`; на `58d23c6`, `74a82fb`, `7c0adad` так само — `-v6.txt`, `-v7.txt`, `-v8.txt`).
+Раніше, 13 кейсів скриптом v0.4.7: 3 × 13/13 на `ddf886f`, `6bf19e8`, `930f31c` (`-v3.txt`, `-v4.txt`, `-v5.txt`). Нижче
+перший прогін v9:
 
 ```
-$ node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/quote-request --job-id 293794bc-deed-41e2-b66d-ea9c8dbbf846
-send-signed-callback → http://127.0.0.1:3000/api/n8n/quote-request (подія «quote-request», jobId 293794bc-deed-41e2-b66d-ea9c8dbbf846)
+$ node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/quote-request --job-id 6decfc41-23bd-4076-82b6-a3981d3eeb18
+send-signed-callback → http://127.0.0.1:3000/api/n8n/quote-request (подія «quote-request», jobId 6decfc41-23bd-4076-82b6-a3981d3eeb18)
 OK        невідома подія в шляху                               очікувано 404, отримано 404
 OK        content-type не json                                 очікувано 415, отримано 415
 OK        тіло > 64 KB                                         очікувано 413, отримано 413
