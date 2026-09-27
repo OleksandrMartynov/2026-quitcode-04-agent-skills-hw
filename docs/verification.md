@@ -77,9 +77,8 @@
 демо-користувача Olena (`leaddesk_session=demo-u_olena`), після кожного коміту — нова збірка й перезапуск;
 базова лінія — коміт `084f9ff`, у якому код `app/ components/ lib/ proxy.ts` дорівнює `main`
 (`git diff --stat main 084f9ff -- app components lib proxy.ts` — порожньо). Команди — з walkthrough плюс
-підрахунок персональних даних у відповіді. Блок нижче — еквівалент: самі заміри робив скрипт `~/ws4-runs/measure.sh`
-(ті самі `curl`, що пишуть відповідь у тимчасові файли й рахують email, телефони `\+380…` і PII-ключі; вивід — у
-`~/ws4-runs/taskA-*.txt`):
+підрахунок персональних даних у відповіді. Блок нижче — стислий еквівалент; самі заміри робив скрипт
+`~/ws4-runs/measure.sh <журнал сервера>` (вивід — у `~/ws4-runs/taskA-*.txt`), його повний текст — під блоком:
 
 ```bash
 C="leaddesk_session=demo-u_olena"; U=http://localhost:3000/dashboard
@@ -90,6 +89,45 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                                      #
 curl -s -b "$C" "$U" | grep -oE '[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)*example\.test' | wc -l   # email-адреси
 curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         # так само rawPayload, ipAddress, userAgent, +380…
 ```
+
+<details><summary>~/ws4-runs/measure.sh — скрипт, що справді виконувався</summary>
+
+```bash
+#!/bin/bash
+# WS4 Task A: the same measurement before and after each fix (production server on :3000).
+# usage: measure.sh <server-log>
+LOG="$1"
+C="leaddesk_session=demo-u_olena"
+U=http://localhost:3000/dashboard
+echo "commit: $(git -C "/Users/alexmart/Work/Agentic Development Course/04" rev-parse --short HEAD)"
+curl -s -o /dev/null -b "$C" "$U"                                              # warm-up
+for i in 1 2 3; do
+  curl -s -o /dev/null -b "$C" -w "TTFB %{time_starttransfer}s, total %{time_total}s\n" "$U"
+done
+HTML=$(mktemp); RSC=$(mktemp)
+curl -s  -b "$C" "$U" > "$HTML"
+curl -sL -b "$C" -H "RSC: 1" "$U" > "$RSC"
+echo "HTML bytes: $(wc -c < "$HTML" | tr -d ' ')"
+echo "RSC bytes:  $(wc -c < "$RSC" | tr -d ' ')"
+for f in HTML RSC; do
+  F=$([ $f = HTML ] && echo "$HTML" || echo "$RSC")
+  echo "$f: email values=$(grep -oE '[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)*example\.test' "$F" | wc -l | tr -d ' ')" \
+       "phones(+380)=$(grep -oE '\+380[0-9 ()-]{6,}' "$F" | wc -l | tr -d ' ')" \
+       "internalNotes=$(grep -o 'internalNotes' "$F" | wc -l | tr -d ' ')" \
+       "rawPayload=$(grep -o 'rawPayload' "$F" | wc -l | tr -d ' ')" \
+       "ipAddress=$(grep -o 'ipAddress' "$F" | wc -l | tr -d ' ')" \
+       "userAgent=$(grep -o 'userAgent' "$F" | wc -l | tr -d ' ')"
+done
+rm -f "$HTML" "$RSC"
+# db:<query> counters for exactly one page request
+BEFORE=$(wc -l < "$LOG")
+curl -s -o /dev/null -b "$C" "$U"
+sleep 1
+echo "db counters for one GET /dashboard:"
+tail -n +"$((BEFORE + 1))" "$LOG" | grep -oE '^db:[A-Za-z]+' | sort | uniq -c
+```
+
+</details>
 
 | Правило (id) | Коміт | Файли | Що змінилось | Було (`main`, `084f9ff`) | Стало | Як міряли |
 |---|---|---|---|---|---|---|
@@ -207,6 +245,50 @@ curl -s -b "$C" "$U" | grep -o 'internalNotes' | wc -l                         #
   - журнал сервера (`npm start`, 145 рядків): тексти нотаток, `@example.test`, `+380` — 0 збігів; є лише
     5 попереджень `Missing origin header from a forwarded Server Actions request` — рівно від 5 POST-запитів
     `nojs-post.mjs` без заголовка `Origin` (браузер його надсилає).
+
+  <details><summary>сирий вивід: без JS і чужий воркспейс (`~/ws4-runs/taskB-verify-nojs.txt`, `taskB-verify-authz.txt`)</summary>
+
+  ```
+  ## no-JS: empty note
+  POST /dashboard/leads/lead_0002 (no JS) -> HTTP 200
+  role=alert: Напишіть текст нотатки
+  textarea value length: 0
+  aria-invalid="true" on textarea: true
+  role=status: (empty)
+  ## no-JS: 501 chars
+  POST /dashboard/leads/lead_0002 (no JS) -> HTTP 200
+  role=alert: Нотатка задовга: 501 із 500 символів
+  textarea value length: 501
+  aria-invalid="true" on textarea: true
+  role=status: (empty)
+  ## no-JS: valid note
+  POST /dashboard/leads/lead_0002 (no JS) -> HTTP 200
+  role=alert: (none)
+  textarea value length: 0
+  aria-invalid="true" on textarea: false
+  role=status: Нотатку додано
+  ## notes now contain the no-JS note?
+  1
+  ```
+
+  ```
+  lead_0001 notes containing marker before: 0
+  ## Marta (brightline) posts a note to lead_0001 (studio-nova)
+  POST /dashboard/leads/lead_0001 (no JS) -> HTTP 404
+  role=alert: (none)
+  textarea value length: (no textarea)
+  aria-invalid="true" on textarea: false
+  role=status: (none)
+  ## forged cookie posts a note to lead_0001
+  POST /dashboard/leads/lead_0001 (no JS) -> HTTP 303, location /login
+  role=alert: (none)
+  textarea value length: (no textarea)
+  aria-invalid="true" on textarea: false
+  role=status: (none)
+  lead_0001 notes containing marker after: 0
+  ```
+
+  </details>
 
 ## Task C — `integrating-n8n-webhooks`
 
