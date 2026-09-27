@@ -10,7 +10,9 @@
 
 ## `quote-request`
 
-- Запускає: Server Action `requestQuote` (`app/quotes/actions.ts`) з форми `/quotes/new`, виклик — в `after()`.
+- Запускає: Server Action `requestQuote` (`app/quotes/actions.ts`) з форми `/quotes/new`, виклик — в `after()`. Кожен
+  прийнятий запит — це запуск воркфлоу, тому форма обмежена: 20 запитів на всю форму й 5 на адресу за 10 хв (адреса —
+  лише із заголовка, який перезаписує проксі: `TRUSTED_CLIENT_IP_HEADER`).
 - `data`: `quoteId`, `company`, `description`, `budget` (число або `null`). Без email: посилання на PDF приходить у колбеку
   й показується на `/quotes/[id]`, n8n нікому не пише. Якщо воркфлоу має надсилати кошторис листом — додати email лише
   після узгодження з власником воркфлоу.

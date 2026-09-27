@@ -449,7 +449,7 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
     `callbackKeys` стоїть замість такої таблиці. Переписати сховище демо-застосунку на БД — окрема зміна поза задачею.
 
   Після третього рев'ю CodeRabbit (на `d209485`, 3 зауваження, усі прийнято; скіл — `7c0adad`, v0.4.12):
-  - `9a912b3` — публічна форма кошторису: не більше 5 запитів з однієї адреси (`x-forwarded-for`) за 10 хвилин
+  - `9a912b3` — публічна форма кошторису: не більше 5 запитів з однієї адреси (`x-forwarded-for`; див. `b32013f` нижче) за 10 хвилин
     (`lib/rate-limit.ts`, фіксоване вікно в пам'яті процесу, як і решта демо-даних; готового обмежувача в проєкті не
     було); шостий отримує помилку форми зі збереженими значеннями, запис і виклик n8n не створюються;
   - `4d4acf3` — `updateLeadStatus`/`deleteLead`: якщо лід видалили між перевіркою й записом, дія відповідає `not_found`,
@@ -465,6 +465,16 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
   - `3eb945a` — рядки таблиці дашборда проєктуються в сховищі (`db.getLeadRows`), а не вирізаються з повних клонів лідів
     (код виправлення Task A `server-serialization`); запит лишив назву `getLeads`, тож лічильники `db:*` Task A ті самі.
 
+  Після п'ятого рев'ю CodeRabbit (`@coderabbitai full review` на `d571fe7`, 3 зауваження, усі прийнято):
+  - `b32013f` — ліміт форми з `9a912b3` брав адресу з першого значення `x-forwarded-for`, яке клієнт підробляє, якщо проксі
+    його не перезаписує, і не прибирав прострочені вікна. Тепер ключ на адресу — лише із заголовка, який проксі гарантовано
+    перезаписує (необов'язковий `TRUSTED_CLIENT_IP_HEADER` у `.env.example`, напр. `x-real-ip` за nginx), 5 за 10 хв; і завжди —
+    спільний ліміт форми 20 за 10 хв, який заголовками не обійти; прострочені вікна видаляються на кожному виклику;
+  - `68f805a` — сторінка статусу `/quotes/[id]` (доступна за випадковим id без сесії) — `robots: noindex, nofollow`,
+    `referrer: no-referrer`, заголовок (поля `Metadata` — за `node_modules/next/dist/docs/…/generate-metadata.md`);
+  - `8696df3` (скіл v0.4.14) — приклад тіла колбека в `references/n8n-setup.md` містить `requestIdempotencyKey` і решту полів
+    контракту: без нього колбек не знайде запис, якщо відповідь 202 загубилась.
+
   `39be1a7`, `66c046a`, `f777499`, `2398c61`, `ddf886f` — старий код з `main`, якого запит не стосувався (агент B сам назвав
   `lead-created` порушенням контракту, але в межах задачі про кошториси його не чіпав). `176dbaa`, `bdb7dbd`, `92a5226` —
   код прогону B, але не контракт n8n: вади форми (пункти чекліста `building-client-form`) і безкінечне опитування знайшло
@@ -476,15 +486,16 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
   стани ключа контракт скіла до v0.4.9 не містив — його додано й у скіл.
 - **Ключі контракту в `.env.example`:** `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
-  `APP_BASE_URL=http://127.0.0.1:3000`; `/webhook-test/` немає. `.env.local` гілки створено тим самим скриптом (старий файл
+  `APP_BASE_URL=http://127.0.0.1:3000`; `/webhook-test/` немає; з `b32013f` — ще необов'язковий порожній
+  `TRUSTED_CLIENT_IP_HEADER` (не секрет: назва заголовка для ліміту форми). `.env.local` гілки створено тим самим скриптом (старий файл
   з етапу 0 не відкривали — перейменовано на `.env.local.pre-ws4d`, обидва ігноруються git).
-- **`npm run lint`, `npm run build` на гілці:** exit 0, без попереджень — `~/ws4-runs/branch-lint-final9.log`,
-  `branch-build-final9.log` на `3eb945a` (фінальний код). Раніше: `-final8.log` на `7c0adad`, `-final7.log` на `74a82fb`, `-final6.log` на `58d23c6`, `branch-{lint,build}-final5.log` на `930f31c`,
+- **`npm run lint`, `npm run build` на гілці:** exit 0, без попереджень — `~/ws4-runs/branch-lint-final10.log`,
+  `branch-build-final10.log` на `8696df3` (фінальний код). Раніше: `-final9.log` на `3eb945a`, `-final8.log` на `7c0adad`, `-final7.log` на `74a82fb`, `-final6.log` на `58d23c6`, `branch-{lint,build}-final5.log` на `930f31c`,
   `-final4.log` на `6bf19e8`; `branch-build-final3.log` — збірка після `ddf886f` (у файлі немає рядка з SHA).
 - **`check-contract.mjs` на фінальному коді** (0 FAIL, код виходу 0). Той самий вивід — у `~/ws4-runs/branch-check-final3.txt`
   (код `ddf886f`, чекер v0.4.7), `branch-check-final4.txt` (`6bf19e8`, v0.4.8), `branch-check-final5.txt` (`930f31c`, v0.4.9)
   `branch-check-final6.txt` (`58d23c6`, v0.4.10), `branch-check-final7.txt` (`74a82fb`, v0.4.11), `branch-check-final8.txt`
-  (`7c0adad`, v0.4.12) і `branch-check-final9.txt` (`3eb945a`, v0.4.13):
+  (`7c0adad`, v0.4.12), `branch-check-final9.txt` (`3eb945a`, v0.4.13) і `branch-check-final10.txt` (`8696df3`, v0.4.14):
 
   ```
   $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs
@@ -585,7 +596,8 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
 - **Матриця підписаних колбеків** проти гілки на коді `ddf886f` (мок з `--delay 60000`, `jobId` — з рядка
   `workflow <jobId> running` після відправки форми; скрипт v0.4.7, ±305 с). Три прогони на трьох свіжих задачах — 13/13
   щоразу (`~/ws4-runs/branch-callback-matrix-v3.txt`; на `6bf19e8` і `930f31c` — теж 3×13/13, `-v4.txt`, `-v5.txt`; на
-  `58d23c6`, `74a82fb`, `7c0adad` і фінальному `3eb945a` — 3×14/14 скриптом v0.4.10, `-v6.txt` … `-v9.txt`), нижче перший:
+  `58d23c6`, `74a82fb`, `7c0adad`, `3eb945a` і фінальному `8696df3` — 3×14/14 скриптом v0.4.10, `-v6.txt` … `-v10.txt`),
+  нижче перший:
 
   ```
   $ node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/quote-request --job-id 576e1e6f-a7be-463e-bfb8-683acf1b1c74
@@ -631,7 +643,20 @@ B їх прочитав. Щоб перевірити, чи це вплинуло
 
   Сканер (`~/ws4-runs/branch-server3-scan.txt`; для `branch-server2.log` — `branch-server2-scan.txt`): email — 1 (назва пакета
   npm), тексту форм, підписів і значень секретів — 0; 22 «телефонні» збіги — цифри всередині UUID і sha256.
-- **Фінальний код, HEAD `3eb945a`** (після четвертого рев'ю CodeRabbit; від `7c0adad` змінились `lib/db.ts`, `lib/data.ts`
+- **Фінальний код, HEAD `8696df3`** (після п'ятого рев'ю CodeRabbit; від `3eb945a` змінились `lib/rate-limit.ts`,
+  `app/quotes/actions.ts`, `app/quotes/[id]/page.tsx`, `.env.example` і `references/n8n-setup.md`) — два запуски `npm start`,
+  мок зі скіла:
+  - без `TRUSTED_CLIENT_IP_HEADER`, мок `--mode immediately`: 21 запит без JS, кожен з новим підробленим `x-forwarded-for` —
+    перші 20 → HTTP 303, 21-й → HTTP 200 з «Забагато запитів за короткий час…»; викликів вебхука в журналі мока — 20
+    (`~/ws4-runs/branch-rate-limit-global.txt`); сторінка статусу — `<meta name="robots" content="noindex, nofollow"/>`,
+    `<meta name="referrer" content="no-referrer"/>`, `<title>Статус кошторису · LeadDesk</title>` (`branch-quote-meta.txt`);
+  - `TRUSTED_CLIENT_IP_HEADER=x-real-ip npm start` (змінна лише в команді запуску), мок `--mode respond-202 --delay 60000`:
+    матриця — 14/14 тричі (`~/ws4-runs/branch-callback-matrix-v10.txt`); з `x-real-ip: 203.0.113.7` запити 1–5 → 303, 6-й →
+    200 з тим самим повідомленням, з `x-real-ip: 203.0.113.8` — знову 303; викликів вебхука — 9 (3 матриці + 6)
+    (`branch-rate-limit-address.txt`);
+  - журнали сервера (`branch-server10a.log` 491 рядок, `branch-server10b.log` 514 за `wc -l`), сканер
+    (`branch-server10{a,b}-scan.txt`): тексту форм, адрес `example.test`, IP із запитів, підписів і значень секретів — 0.
+- **Код `3eb945a`** (після четвертого рев'ю CodeRabbit; від `7c0adad` змінились `lib/db.ts`, `lib/data.ts`
   і скрипти скіла) — нова збірка, `npm start`, мок **зі скіла** `node --env-file=.env.local
   .claude/skills/integrating-n8n-webhooks/scripts/mock-n8n.mjs --mode respond-202 --delay 60000`:
   - матриця — 14/14 тричі на трьох свіжих кошторисах без JS (HTTP 303) (`~/ws4-runs/branch-callback-matrix-v9.txt`);
