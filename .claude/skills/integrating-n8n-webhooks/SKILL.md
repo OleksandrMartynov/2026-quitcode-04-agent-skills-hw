@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.9"
+  version: "0.4.10"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -45,7 +45,8 @@ metadata:
 | `APP_BASE_URL` | адреса застосунку для `callbackUrl` | `http://127.0.0.1:3000` |
 
 `N8N_WEBHOOK_BASE_URL` у production — лише `https:`; `http:` — тільки loopback (локальний n8n, мок): клієнт
-перевіряє схему до виклику й не йде за редиректами (`redirect: "error"`), щоб токен не пішов відкритим каналом.
+перевіряє схему до виклику й не йде за редиректами (`redirect: "manual"`; 3xx — як 4xx, без повторів), щоб токен
+не пішов відкритим каналом чи на чужу адресу.
 
 **Виклик n8n** — деталі й чому: [references/outgoing-request.md](references/outgoing-request.md).
 
@@ -110,6 +111,11 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
           на кожній 4xx/5xx після claim, 200 duplicate, звірка з jobId:event, 202, стан — з await до відповіді.
 - [ ] C14 У журналах немає тіл, персональних даних і секретів.
 - [ ] C15 Колбек — у app/api/n8n/[event]/route.ts, якщо конверт шле callbackUrl.
+Без id — перевіряє не check-contract, а рев'ю й матриця (scripts/send-signed-callback.mjs):
+- [ ] База вебхука — https: (http — лише loopback); fetch без переходу за редиректами.
+- [ ] Воркфлоу з колбеком запущено лише після 202 з job_id; інакше запис — failed, не «чекає вічно».
+- [ ] Ліміт 64 KB — під час читання тіла (матриця: частинами без content-length → 413).
+- [ ] Ключ «в обробці» → 409, не duplicate (C13 ловить 2xx у цій гілці; матриця: дві доставки → 202 і 409).
 ```
 
 Скрипт — евристики, а не розбір TypeScript (як він знаходить код n8n — `--help`): 0 FAIL не замінює рев'ю.

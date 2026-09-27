@@ -41,7 +41,7 @@ export async function triggerWorkflow(
     try {
       const res = await fetch(url, {
         method: "POST",
-        redirect: "error", // редирект переніс би тіло й x-n8n-token на іншу адресу
+        redirect: "manual", // не йти за редиректом: він переніс би тіло й x-n8n-token на іншу адресу
         headers: {
           "content-type": "application/json",
           "x-n8n-token": token,
@@ -62,7 +62,7 @@ export async function triggerWorkflow(
       await res.body?.cancel(); // тіло не потрібне — звільнити з'єднання
       // 200 там, де чекаємо колбек, — воркфлоу не дійшов до Respond to Webhook: колбека не буде
       if (res.ok) return options.callback ? { ok: false, status } : { ok: true, status, jobId: null };
-      if (res.status < 500) return { ok: false, status }; // 4xx: виправляти, не повторювати
+      if (res.status < 500) return { ok: false, status }; // 3xx/4xx: виправляти налаштування, не повторювати
     } catch {
       logCall(event, ids.correlationId, null, started, attempt, body); // мережа або TimeoutError
     }
@@ -154,7 +154,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   const tooLarge = () => Response.json({ error: "too_large" }, { status: 413 });
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return tooLarge(); // заявлено забагато
   const raw = await readRawBody(req.body); // сире тіло: підпис рахується від цих байтів
-  if (raw === null) return tooLarge(); // chunked без content-length: ліміт — під час читання
+  if (raw === TOO_LARGE) return tooLarge(); // chunked без content-length: ліміт — під час читання
+  if (raw === null) return Response.json({ error: "bad_request" }, { status: 400 }); // тіло обірвалось
 
   const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
   const ts = Number(timestamp);
@@ -187,8 +188,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   return Response.json({ ok: true }, { status: 202 });
 }
 
+const TOO_LARGE = Symbol("too_large");
+
 // читає тіло як текст, але зупиняється на MAX_BODY_BYTES: непідписаний запит не змусить буферизувати більше
-async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | null> {
+async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | typeof TOO_LARGE | null> {
   if (!body) return "";
   let bytes = 0;
   const limited = body.pipeThrough(
@@ -203,7 +206,7 @@ async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<str
   try {
     return await new Response(limited).text();
   } catch {
-    return null;
+    return bytes > MAX_BODY_BYTES ? TOO_LARGE : null; // null — потік обірвався з іншої причини
   }
 }
 
@@ -247,8 +250,9 @@ function isHttpsUrl(value: unknown) {
 }
 ```
 
-`lib/n8n/store` повинен: `claimCallbackKey(key)` — атомарно вставити ключ зі станом `processing` і
-повернути `"claimed"`, а якщо ключ уже є — його стан (`"processing"` чи `"done"`); `completeCallbackKey(key)` —
-перевести в `done` після збереження результату; `releaseCallbackKey(key)` — видалити;
+`lib/n8n/store` повинен: `claimCallbackKey(key)` — атомарно вставити ключ зі станом `processing` і часом claim та
+повернути `"claimed"`, а якщо ключ уже є — його стан (`"processing"` чи `"done"`); `processing`, старший за
+~60 с (обробник упав, не завершивши й не звільнивши ключ), вважати простроченим і застовпити знову;
+`completeCallbackKey(key)` — перевести в `done` після збереження результату; `releaseCallbackKey(key)` — видалити;
 `saveCallbackResult(data)` — знайти запис за `data.jobId` або `data.requestIdempotencyKey` і зберегти статус та
-`result.documentUrl`/`error.code`. Дублікат (200) — лише ключ у стані `done`.
+`result.documentUrl`/`error.code`, не перетираючи `ready` пізнім `failed`. Дублікат (200) — лише ключ у стані `done`.

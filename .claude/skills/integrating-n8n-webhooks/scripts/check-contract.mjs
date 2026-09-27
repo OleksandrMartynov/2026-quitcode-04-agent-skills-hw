@@ -1180,31 +1180,35 @@ function blockOpen(text, idx) {
   }
   return -1;
 }
-// `return …` statements with a 4xx/5xx status after `from`, inside the function that holds `from`
-// (not the claim's own "already taken" / "still in progress" answers: that key is not ours to free —
-// the same statement as the claim, or an `if` on the variable that holds its result)
-function rejectsAfter(file, from) {
+// `return …` statements after `from`, inside the function that holds `from`, with their status (null if unknown)
+// and `own`: one of the claim's own answers ("already taken" / "still in progress" — that key is not ours to free):
+// the same statement as the claim, or an `if` whose whole condition is about the variable that holds its result
+function returnsAfter(file, from) {
   const held = file.blank.slice(Math.max(0, from - 80), from).match(/(?:const|let|var)\s+([\w$]+)\s*(?::[^=;]+)?=\s*(?:await\s+)?$/)?.[1];
+  const heldRe = held && new RegExp(`(?<![\\w$.])${held.replace(/\$/g, "\\$")}(?![\\w$])`);
   let top = blockOpen(file.blank, from);
   for (let up = top; up !== -1; up = blockOpen(file.blank, up)) top = up;
   const end = top === -1 ? file.blank.length : closeOf(file.blank, top);
   const out = [];
   for (const m of file.blank.slice(from, end).matchAll(/\breturn\b/g)) {
     const idx = from + m.index;
-    if (!file.blank.slice(from, idx).includes(";")) continue;
-    if (held) {
-      const seg = file.blank.slice(Math.max(file.blank.lastIndexOf(";", idx), file.blank.lastIndexOf("}", idx)) + 1, idx);
-      const cond = seg.match(/\bif\s*\(([\s\S]*)\)\s*\{?\s*$/);
-      if (cond && new RegExp(`(?<![\\w$.])${held.replace(/\$/g, "\\$")}(?![\\w$])`).test(cond[1])) continue;
+    let own = !file.blank.slice(from, idx).includes(";");
+    let cond = null;
+    if (!own && heldRe) {
+      const segStart = Math.max(file.blank.lastIndexOf(";", idx), file.blank.lastIndexOf("}", idx)) + 1;
+      const c = file.blank.slice(segStart, idx).match(/\bif\s*\(([\s\S]*)\)\s*\{?\s*$/);
+      if (c && heldRe.test(c[1]) && !/&&|\|\|/.test(c[1])) { own = true; cond = file.code.slice(segStart, idx); }
     }
     const stmt = file.blank.slice(idx, exprEnd(file.blank, idx + 6));
     const lit = stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*(\d{3})\b/) ?? stmt.match(/\bstatus\s*:\s*(\d{3})\b/);
     const named = lit ? null : stmt.match(/\bstatus\s*:\s*([A-Z_][A-Z0-9_]*)\b/) ?? stmt.match(/^return\s+(?:await\s+)?[\w$.]+\(\s*([A-Z_][A-Z0-9_]*)\s*,/);
     const status = lit ? Number(lit[1]) : named ? evalNum(file, named[1]) : null;
-    if (status >= 400) out.push({ idx, stmt, status });
+    out.push({ idx, stmt, status, own, cond });
   }
   return out;
 }
+// 4xx/5xx answers after the claim that must free the key on their own path
+const rejectsAfter = (file, from) => returnsAfter(file, from).filter((r) => !r.own && r.status >= 400);
 // the key is released before this return on its own path: in the statement, earlier in the same block
 // (closed nested blocks excluded), in an enclosing finally, or inside the helper it returns through
 function releasedOnPath(file, r, releaseRe) {
@@ -1229,15 +1233,18 @@ function releasedOnPath(file, r, releaseRe) {
 }
 const WRITE_VERB = /^(save|update|insert|set|persist|store|mark|complete|upsert|finish|record|write|commit)/i;
 const READ_VERB = /^(get|find|list|read|load|fetch|has|count|select|query|claim|release|reserve|acquire|lock|unlock|free|forget|delete|del|remove)/i;
-// state writes after `from`: a write-verb call, or any non-read method of a store object (db.finishJob)
-function stateWrites(file, from) {
+// state writes after `from`: a write-verb call, or any non-read method of a store object (db.finishJob);
+// calls on the idempotency key itself (completeCallbackKey(key)) are bookkeeping, not the result
+function stateWrites(file, from, keyName) {
   const out = [];
+  const onKey = keyName && new RegExp(`^\\s*${keyName.replace(/\$/g, "\\$")}\\s*[,)]`);
   for (const m of file.blank.matchAll(/(?<![\w$.])(?:([\w$]+)\.)?([\w$]+)\s*\(/g)) {
     const [, obj, name] = m;
     if (m.index < from || /function\s+$/.test(file.blank.slice(Math.max(0, m.index - 10), m.index))) continue;
     const store = obj && /^(db|store|repo|repository|prisma|kv|redis|storage|dao)$/i.test(obj);
     if (READ_VERB.test(name) || !(WRITE_VERB.test(name) || store)) continue;
     const open = m.index + m[0].length - 1;
+    if (onKey && onKey.test(file.blank.slice(open + 1))) continue;
     const close = closeOf(file.blank, open);
     const lead = file.blank.slice(Math.max(0, m.index - 8), m.index);
     const detached = /\bvoid\s+$/.test(lead)
@@ -1309,11 +1316,17 @@ check("C13", "Колбек: 404/415/413, вікно 300 с, claim до парс�
       else for (const r of rejectsAfter(route, claimIdx)) { // each 4xx/5xx path frees the key itself: a release on another branch does not count
         if (!releasedOnPath(route, r, releaseRe)) add(route.path, route.lineOf(r.idx), `відповідь ${r.status} після claim не звільняє ключ — n8n не зможе повторити колбек`);
       }
+      // a key still being processed must not be acknowledged: the first delivery may yet fail and free it
+      const own = returnsAfter(route, claimIdx).filter((r) => r.own);
+      const is2xx = (r) => r.status >= 200 && r.status < 300;
+      const busy = own.find((r) => r.cond && /processing|in[_ -]?progress|pending|busy/i.test(r.cond));
+      if (busy && is2xx(busy)) add(route.path, route.lineOf(busy.idx), `ключ «в обробці» отримує ${busy.status} — n8n прийме повтор за успіх, хоча перша доставка ще може впасти`);
+      else if (!busy && own.filter(is2xx).length > 1) add(route.path, route.lineOf(own.filter(is2xx)[1].idx), "обидві відповіді claim («уже є» і «в обробці») — 2xx: повтор під час обробки прийметься за успіх");
     }
     if (!hasStatus(202)) add(route.path, 1, "успіх не відповідає 202", "file");
     const afterSpans = callsOf(route, "after|unstable_after").map((c) => [c.open, c.close]);
     const inAfter = (i) => afterSpans.some(([a, b]) => i > a && i < b);
-    const writes = stateWrites(route, claims.length ? Math.min(...claims) : 0);
+    const writes = stateWrites(route, claims.length ? Math.min(...claims) : 0, keyName);
     if (writes.length && writes.every((w) => inAfter(w.idx))) add(route.path, route.lineOf(afterSpans[0][0]), "стан зберігається лише в after() — n8n не повторить колбек після 2xx");
     else if (writes.length && writes.every((w) => inAfter(w.idx) || w.detached)) {
       const w = writes.find((x) => x.detached);
