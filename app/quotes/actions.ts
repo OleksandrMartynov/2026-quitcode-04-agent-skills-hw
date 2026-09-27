@@ -2,16 +2,17 @@
 
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib/quote-form";
-import { takeRateLimit } from "@/lib/rate-limit";
+import { returnRateLimit, takeRateLimit, trustedClientAddress } from "@/lib/rate-limit";
 
 // Every accepted request starts a 40–90 s PDF workflow in n8n, so a script must not be able to post the
-// public form without limit: at most QUOTES_PER_WINDOW requests per address per QUOTE_WINDOW_MS.
-const QUOTES_PER_WINDOW = 5;
+// public form without limit. Per address (only from the header the proxy guarantees, see lib/rate-limit.ts):
+// QUOTES_PER_ADDRESS per window; for the whole form, whatever the headers say: QUOTES_TOTAL per window.
+const QUOTES_PER_ADDRESS = 5;
+const QUOTES_TOTAL = 20;
 const QUOTE_WINDOW_MS = 10 * 60_000;
 
 export type RequestQuoteState =
@@ -29,9 +30,12 @@ export async function requestQuote(
     return { status: "invalid", errors: parsed.errors, values: parsed.values };
   }
 
-  // x-forwarded-for is set by the proxy in front of the app; without one every request counts as local.
-  const address = (await headers()).get("x-forwarded-for")?.split(",")[0].trim() || "local";
-  if (!takeRateLimit(`quote:${address}`, QUOTES_PER_WINDOW, QUOTE_WINDOW_MS)) {
+  const address = await trustedClientAddress();
+  const addressKey = address && `quote:${address}`;
+  const addressOk = !addressKey || takeRateLimit(addressKey, QUOTES_PER_ADDRESS, QUOTE_WINDOW_MS);
+  const totalOk = addressOk && takeRateLimit("quote:*", QUOTES_TOTAL, QUOTE_WINDOW_MS);
+  if (addressOk && !totalOk && addressKey) returnRateLimit(addressKey); // refused by the global limit: not this address's
+  if (!addressOk || !totalOk) {
     return {
       status: "invalid",
       errors: { form: "Забагато запитів за короткий час. Спробуйте ще раз за кілька хвилин." },
