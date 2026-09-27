@@ -37,8 +37,9 @@ export async function requestQuote(
       { quoteId: quote.id, company: quote.company, description: quote.description, budget: quote.budget },
       { idempotencyKey: quote.idempotencyKey, correlationId: quote.correlationId },
       { callback: true },
-    );
-    if (result.ok) await db.setQuoteJob(quote.id, result.jobId);
+    ).catch(() => null); // nobody awaits after(): an unexpected throw must still end the quote as failed
+    // Only 202 with a job id means a callback is coming; anything else would leave the quote waiting forever.
+    if (result?.ok && result.status === 202 && result.jobId) await db.setQuoteJob(quote.id, result.jobId);
     else await db.finishQuote(quote.id, { status: "failed", errorCode: "trigger_failed" });
   });
 
