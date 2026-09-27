@@ -10,6 +10,8 @@ const REFUSED: Record<Exclude<LeadMutationState["status"], "ok">, string> = {
   not_found: "Лід недоступний: його вже видалено або він з іншого воркспейсу.",
   invalid: "Такого статусу немає.",
 };
+// The action itself failed (network, server error): nothing was changed.
+const FAILED = "Не вдалося зберегти зміну. Перевірте з'єднання й спробуйте ще раз.";
 
 export function LeadActions({ leadId, status }: { leadId: string; status: LeadStatus }) {
   const router = useRouter();
@@ -22,10 +24,15 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
     setCurrent(next);
     setError(null);
     startTransition(async () => {
-      const result = await updateLeadStatus(leadId, next);
-      if (result.status !== "ok") {
+      try {
+        const result = await updateLeadStatus(leadId, next);
+        if (result.status !== "ok") {
+          setCurrent(previous);
+          setError(REFUSED[result.status]);
+        }
+      } catch {
         setCurrent(previous);
-        setError(REFUSED[result.status]);
+        setError(FAILED);
       }
       router.refresh();
     });
@@ -35,9 +42,13 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
     if (!window.confirm("Видалити лід назавжди?")) return;
     setError(null);
     startTransition(async () => {
-      const result = await deleteLead(leadId);
-      if (result.status === "ok") router.push("/dashboard");
-      else setError(REFUSED[result.status]);
+      try {
+        const result = await deleteLead(leadId);
+        if (result.status === "ok") router.push("/dashboard");
+        else setError(REFUSED[result.status]);
+      } catch {
+        setError(FAILED);
+      }
     });
   }
 
