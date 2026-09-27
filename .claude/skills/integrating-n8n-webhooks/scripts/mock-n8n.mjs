@@ -129,6 +129,12 @@ function log(line) {
   console.log(`[mock-n8n] ${new Date().toISOString()} ${line}`);
 }
 
+// origin + path only: a query string or user:password in the URL may carry a secret and never goes to the log
+function safeUrl(value) {
+  const url = new URL(value);
+  return `${url.origin}${url.pathname}`;
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -209,8 +215,7 @@ async function sendCallback({ target, event, jobId, correlationId, requestKey })
     "idempotency-key": `${jobId}:${event}`,
   };
   if (correlationId) headers["x-correlation-id"] = correlationId;
-  const where = new URL(target);
-  const label = `${where.origin}${where.pathname}`;
+  const label = safeUrl(target);
 
   for (let attempt = 1; attempt <= CALLBACK_TRIES; attempt++) {
     const started = Date.now();
@@ -386,7 +391,7 @@ server.listen(port, args.host, () => {
   log(token ? "header auth: x-n8n-token required (N8N_WEBHOOK_TOKEN is set)" : "header auth: none (N8N_WEBHOOK_TOKEN is not set)");
   log(
     callbackSecret
-      ? `callbacks: signed, sent to ${callbackUrlFlag ?? "the request's callbackUrl"} after ${delayMs} ms (async modes)`
+      ? `callbacks: signed, sent to ${callbackUrlFlag ? safeUrl(callbackUrlFlag) : "the request's callbackUrl"} after ${delayMs} ms (async modes)`
       : "callbacks: off (N8N_CALLBACK_SECRET is not set)",
   );
 });

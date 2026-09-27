@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.12"
+  version: "0.4.13"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -177,4 +177,5 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
 - [references/traps.md](references/traps.md) — відомі пастки в документації й чужих скілах, межі скіла.
 - `scripts/check-contract.mjs` — статична перевірка C1–C15; `--root <тека>`, `--changed-since <ref>`, `--help`.
 - `scripts/send-signed-callback.mjs` — матриця підписаних колбеків проти запущеного застосунку; `--help`.
-- `scripts/mock-n8n.mjs` — локальний мок n8n (копія `tools/mock-n8n.mjs`); `--help`.
+- `scripts/mock-n8n.mjs` — локальний мок n8n (копія `tools/mock-n8n.mjs`; адресу колбека в журнал пише без query й
+  облікових даних); `--help`.

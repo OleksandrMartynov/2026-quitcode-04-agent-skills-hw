@@ -54,7 +54,14 @@ const secret = process.env.N8N_CALLBACK_SECRET;
 if (!args.url || !args["job-id"]) { console.error("send-signed-callback: потрібні --url і --job-id (див. --help)"); process.exit(2); }
 if (!secret) { console.error("send-signed-callback: немає N8N_CALLBACK_SECRET (запускайте з --env-file=.env.local)"); process.exit(2); }
 
-const url = new URL(args.url);
+let url;
+try {
+  url = new URL(args.url);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("not http(s)");
+} catch {
+  console.error("send-signed-callback: --url має бути http(s)-адресою, напр. http://127.0.0.1:3000/api/n8n/<event> (див. --help)");
+  process.exit(2);
+}
 const pathEvent = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() ?? "");
 const jobId = args["job-id"];
 const correlationId = args["correlation-id"] ?? randomUUID();
