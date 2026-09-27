@@ -43,6 +43,7 @@ const LATENCY_MS = {
   findQuoteForCallback: 80,
   setQuoteJob: 80,
   finishQuote: 80,
+  failQuoteTrigger: 80,
   claimCallbackKey: 20,
   completeCallbackKey: 20,
   releaseCallbackKey: 20,
@@ -481,6 +482,23 @@ export const db = {
       quote.status = outcome.status;
       quote.documentUrl = outcome.status === "ready" ? outcome.documentUrl : null;
       quote.errorCode = outcome.status === "failed" ? outcome.errorCode : null;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  /**
+   * The trigger failed (no 202 with a job id): ends the quote as failed, but only while it is still waiting
+   * (queued/processing). If the callback has already finished it — ready or failed with n8n's own error
+   * code — that result stays.
+   */
+  failQuoteTrigger(id: string) {
+    return query("failQuoteTrigger", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote || (quote.status !== "queued" && quote.status !== "processing")) return false;
+      quote.status = "failed";
+      quote.documentUrl = null;
+      quote.errorCode = "trigger_failed";
       quote.updatedAt = new Date().toISOString();
       return true;
     });

@@ -40,7 +40,7 @@ export async function requestQuote(
     ).catch(() => null); // nobody awaits after(): an unexpected throw must still end the quote as failed
     // Only 202 with a job id means a callback is coming; anything else would leave the quote waiting forever.
     if (result?.ok && result.status === 202 && result.jobId) await db.setQuoteJob(quote.id, result.jobId);
-    else await db.finishQuote(quote.id, { status: "failed", errorCode: "trigger_failed" });
+    else await db.failQuoteTrigger(quote.id); // never over a result the callback has already saved
   });
 
   // A redirect from the action also works without JavaScript (303 to the status page).
