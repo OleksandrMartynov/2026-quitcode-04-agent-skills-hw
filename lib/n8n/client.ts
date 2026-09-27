@@ -35,7 +35,7 @@ export async function triggerWorkflow(
     try {
       const res = await fetch(url, {
         method: "POST",
-        redirect: "error", // a redirect would carry the body and x-n8n-token to another address
+        redirect: "manual", // never follow: a redirect would carry the body and x-n8n-token to another address
         headers: {
           "content-type": "application/json",
           "x-n8n-token": token,
@@ -56,7 +56,7 @@ export async function triggerWorkflow(
       await res.body?.cancel(); // the body is not needed: free the connection
       // A callback workflow answers 202; a plain 200 means it never reached Respond to Webhook.
       if (res.ok) return options.callback ? { ok: false, status } : { ok: true, status, jobId: null };
-      if (res.status < 500) return { ok: false, status }; // 4xx: fix the request, retrying will not help
+      if (res.status < 500) return { ok: false, status }; // 3xx/4xx: fix the configuration, retrying will not help
     } catch {
       logCall(event, ids.correlationId, null, started, attempt, body); // network error or TimeoutError
     }
