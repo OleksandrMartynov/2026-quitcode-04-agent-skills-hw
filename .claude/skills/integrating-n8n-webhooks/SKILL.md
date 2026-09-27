@@ -15,7 +15,7 @@ description: >-
   воркфлоу, вебхуків інших сервісів (Stripe, GitHub), черг і фонових воркерів.
 metadata:
   owner: quitcode-agency
-  version: "0.4.11"
+  version: "0.4.12"
 ---
 
 # Next.js ↔ n8n: контракт команди
@@ -163,7 +163,8 @@ result: { documentUrl } | error: { code }, completedAt } }`. Порядок об
       `callback POST …/api/n8n/<event> -> 202`, а сторінка статусу показує результат; форма відповідає одразу.
 - [ ] Мок з довгим `--delay` (напр. 60000) і його `jobId` з рядка `workflow <jobId> running`, тоді
       `node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/<event> --job-id <jobId>`
-      → `Підсумок: 13/13 збіглися → exit 0` (хибний підпис, прострочений час, повтор, чужий ключ…; опції — `--help`).
+      → `Підсумок: 14/14 збіглися → exit 0` (хибний підпис, прострочений час, тіло > 64 KB частинами → 413, дві
+      одночасні доставки → 202 і 409, повтор → 200, чужий ключ…; опції — `--help`).
 - [ ] Журнал сервера після сценарію — без тіл, email, телефонів, токенів і підписів.
 
 ## Файли скіла
