@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { addLeadNote, type AddLeadNoteState } from "@/app/actions";
 import { NOTE_MAX_LENGTH } from "@/lib/lead-note";
 
@@ -8,17 +8,21 @@ const initialState: AddLeadNoteState = { status: "idle" };
 
 export function LeadNoteForm({ leadId }: { leadId: string }) {
   const [state, formAction, pending] = useActionState(addLeadNote, initialState);
-  const errors = state.status === "invalid" ? state.errors : {};
+  // The answer the user has since edited the note against: its note error is stale. A new answer resets this.
+  const [editedAfter, setEditedAfter] = useState<AddLeadNoteState | null>(null);
+  const errors = state.status === "invalid" ? { ...state.errors } : {};
+  if (editedAfter === state) delete errors.note;
   const values = state.status === "invalid" ? state.values : {};
+  const messages = Object.values(errors);
 
   return (
     <form action={formAction} className="space-y-2" noValidate>
       <input type="hidden" name="leadId" value={leadId} />
 
-      {state.status === "invalid" && (
+      {messages.length > 0 && (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">
           <ul className="list-disc pl-4">
-            {Object.values(errors).map((message) => (
+            {messages.map((message) => (
               <li key={message}>{message}</li>
             ))}
           </ul>
@@ -34,6 +38,7 @@ export function LeadNoteForm({ leadId }: { leadId: string }) {
         rows={3}
         maxLength={NOTE_MAX_LENGTH}
         defaultValue={values.note}
+        onChange={() => setEditedAfter(state)}
         aria-invalid={Boolean(errors.note)}
         aria-describedby={errors.note ? "note-hint note-error" : "note-hint"}
         className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 aria-invalid:border-red-500"
