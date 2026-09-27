@@ -282,8 +282,12 @@ const store = (globalForStore.leadDeskStore ??= createStore());
 // Quotes live in their own global so a store created before they existed keeps working in `next dev`.
 // callbackKeys stands in for a table with a unique constraint on the callback idempotency-key
 // and a state column: "processing" while the first delivery is being saved, "done" once it is.
+// A "processing" claim older than CALLBACK_CLAIM_LEASE_MS is stale (the handler died before
+// completing or releasing it) and may be claimed again.
 type CallbackKeyState = "processing" | "done";
-type QuoteStore = { quotes: Quote[]; callbackKeys: Map<string, CallbackKeyState> };
+type CallbackKey = { state: CallbackKeyState; at: number };
+type QuoteStore = { quotes: Quote[]; callbackKeys: Map<string, CallbackKey> };
+const CALLBACK_CLAIM_LEASE_MS = 60_000;
 const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: QuoteStore };
 const quoteStore: QuoteStore = (globalForQuotes.leadDeskQuotes ??= { quotes: [], callbackKeys: new Map() });
 
@@ -471,6 +475,8 @@ export const db = {
     return query("finishQuote", () => {
       const quote = quoteStore.quotes.find((q) => q.id === id);
       if (!quote) return false;
+      // A late "failed" (a trigger that looked lost, then a callback after all) never undoes a ready quote.
+      if (quote.status === "ready" && outcome.status === "failed") return false;
       quote.jobId ??= jobId;
       quote.status = outcome.status;
       quote.documentUrl = outcome.status === "ready" ? outcome.documentUrl : null;
@@ -483,16 +489,18 @@ export const db = {
   /** Atomically records a callback key as "processing"; otherwise returns the state it already has. */
   claimCallbackKey(key: string): Promise<"claimed" | CallbackKeyState> {
     return query("claimCallbackKey", () => {
-      const state = quoteStore.callbackKeys.get(key);
-      if (state) return state;
-      quoteStore.callbackKeys.set(key, "processing");
+      const now = Date.now();
+      const current = quoteStore.callbackKeys.get(key);
+      const stale = current?.state === "processing" && now - current.at > CALLBACK_CLAIM_LEASE_MS;
+      if (current && !stale) return current.state;
+      quoteStore.callbackKeys.set(key, { state: "processing", at: now });
       return "claimed";
     });
   },
 
   /** Marks a claimed key as done: from now on a repeat is a duplicate. */
   completeCallbackKey(key: string) {
-    return query("completeCallbackKey", () => quoteStore.callbackKeys.set(key, "done").size > 0);
+    return query("completeCallbackKey", () => quoteStore.callbackKeys.set(key, { state: "done", at: Date.now() }).size > 0);
   },
 
   releaseCallbackKey(key: string) {

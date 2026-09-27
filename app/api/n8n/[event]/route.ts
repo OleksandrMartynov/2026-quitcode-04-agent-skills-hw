@@ -27,7 +27,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return reply(413, { error: "too_large" });
 
   const text = await readRawBody(req.body); // the raw body: the signature covers exactly these bytes
-  if (text === null) return reply(413, { error: "too_large" });
+  if (text === TOO_LARGE) return reply(413, { error: "too_large" });
+  if (text === null) return reply(400, { error: "bad_request" }); // the sender broke off the body
   raw = text;
 
   const timestamp = req.headers.get("x-n8n-timestamp") ?? "";
@@ -65,8 +66,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   return reply(202, { ok: true });
 }
 
+const TOO_LARGE = Symbol("too_large");
+
 // Reads the body as text but stops at MAX_BODY_BYTES: an unauthenticated sender cannot make us buffer more.
-async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | null> {
+async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<string | typeof TOO_LARGE | null> {
   if (!body) return "";
   let bytes = 0;
   const limited = body.pipeThrough(
@@ -81,7 +84,7 @@ async function readRawBody(body: ReadableStream<Uint8Array> | null): Promise<str
   try {
     return await new Response(limited).text();
   } catch {
-    return null;
+    return bytes > MAX_BODY_BYTES ? TOO_LARGE : null; // null: the stream failed for another reason
   }
 }
 
